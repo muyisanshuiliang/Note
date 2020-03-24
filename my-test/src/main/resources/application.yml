@@ -1,0 +1,25 @@
+
+#############   base config   ##############
+server:
+  port: 11002
+#############   Configuration for database   ##############
+spring:
+  datasource:
+    username: zhnf
+    password: zhnf@123
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://192.168.2.252:3306/test?autoReconnect=true&useUnicode=true&characterEncoding=utf-8&useSSL=false
+    hikari:
+      minimum-idle: 8
+      maximum-pool-size: 15
+      idle-timeout: 240000
+      max-lifetime: 300000
+      connection-timeout: 60000
+      validation-timeout: 5000
+      leak-detection-threshold: 60000
+mybatis-plus:
+  configuration:
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    field-strategy: 1
+  type-handlers-package: com.example.demo.mybatisplus.mapper.handler
