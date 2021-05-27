@@ -1220,9 +1220,309 @@ public class PreLogFilter extends ZuulFilter{
 zuu.PreLogFilter.pre.disable= true
 ```
 
+## （九）、Gateway新一代路由网关
+
+>[官网地址](https://cloud.spring.io/spring-cloud-static/spring-cloud-gateway/2.2.1.RELEASE/reference/html/)
+
+### 1、概述
+
+​		Gateway是在Spring生态系统之上构建的API网关服务，基于`Spring 5`，`Spring Boot 2`和 `Project Reactor`等技术。Gateway旨在提供一种简单而有效的方式来对API进行路由，以及提供一些强大的过滤器功能， 例如：熔断、限流、重试等
+
+​	Spring Cloud Gateway 作为 Spring Cloud 生态系统中的网关，==目标是替代Zuul==，在Spring Cloud 2.0以上版本中，没有对新版本的Zuul 2.0以上最新高性能版本进行集成，仍然还是使用的Zuul 1.x非Reactor模式的老版本。而为了提升网关的性能，Spring Cloud Gateway是基于WebFlux框架实现的，==而WebFlux框架底层则使用了高性能的Reactor模式通信框架Netty==。
+
+​		Spring Cloud Gateway的目标提供统一的路由方式且基于 Filter 链的方式提供了网关基本的功能，例如：安全，监控/指标，和限流。
+
+![image-20210526223206122](一、JAVA基础.assets/image-20210526223206122.png)
+
+![image-20210526223238074](一、JAVA基础.assets/image-20210526223238074.png)
+
+![image-20210526223312159](一、JAVA基础.assets/image-20210526223312159.png)
+
+​		 一方面因为Zuul1.0已经进入了维护阶段，而且Gateway是Spring Cloud团队研发的，值得信赖。而且很多功能是Zuul都没有用起来也非常的简单便捷。
+
+​		Gateway是基于==异步非阻塞==模型上进行开发的，性能方面不需要担心。虽然Netflix早就发布了最新的 Zuul 2.x，但 Spring Cloud 貌似没有整合计划。而且Netflix相关组件都宣布进入维护期；不知前景如何？多方面综合考虑Gateway是很理想的网关选择。
+
+> ==Spring Cloud Gateway 具有如下特性==：
+>
+> 基于Spring Framework 5, Project Reactor 和 Spring Boot 2.0 进行构建；
+> 动态路由：能够匹配任何请求属性；
+> 可以对路由指定 Predicate（断言）和 Filter（过滤器）；
+> 集成Hystrix的断路器功能；
+> 集成 Spring Cloud 服务发现功能；
+> 易于编写的 Predicate（断言）和 Filter（过滤器）；
+> 请求限流功能；
+> 支持路径重写。
+
+**Spring Cloud Gateway 与 Zuul的区别:**
+在Spring Cloud Finchley 正式版之前，Spring Cloud 推荐的网关是 Netflix 提供的Zuul：
+
+- Zuul 1.x，是一个基于==阻塞 I/ O ==的 API Gateway
+- Zuul 1.x 基于Servlet 2. 5使用==阻塞架构==它不支持任何长连接(如 WebSocket) Zuul 的设计模式和Nginx较像，每次 I/ O 操作都是从工作线程中选择一个执行，请求线程被阻塞到工作线程完成，但是差别是Nginx 用C++ 实现，Zuul 用 Java 实现，而 JVM 本身会有第一次加载较慢的情况，使得Zuul 的性能相对较差。
+- Zuul 2.x理念更先进，想基于Netty非阻塞和支持长连接，但Spring Cloud目前还没有整合。在性能方面，根据官方提供的基准测试， Spring Cloud Gateway 的 RPS（每秒请求数）是Zuul 的 1. 6 倍。
+- Spring Cloud Gateway 建立 在 Spring Framework 5、 Project Reactor 和 Spring Boot 2 之上， 使用==非阻塞 API==。
+- Spring Cloud Gateway 还 支持 WebSocket， 并且与Spring紧密集成拥有更好的开发体验。
+
+​       Springcloud中所集成的Zuul版本，采用的是Tomcat容器，使用的是传统的Servlet IO处理模型。servlet由servlet container进行生命周期管理。container启动时构造servlet对象并调用servlet init()进行初始化；container运行时接受请求，并为每个请求分配一个线程（一般从线程池中获取空闲线程）然后调用service()。container关闭时调用servlet destory()销毁servlet；
+
+![image-20210526224418647](一、JAVA基础.assets/image-20210526224418647.png)
+
+上述模式的缺点：
+		servlet是一个简单的网络IO模型，当请求进入servlet container时，servlet container就会为其绑定一个线程，在并发不高的场景下这种模型是适用的。但是一旦高并发(比如抽风用jemeter压)，线程数量就会上涨，而线程资源代价是昂贵的（上线文切换，内存消耗大）严重影响请求的处理时间。在一些简单业务场景下，不希望为每个request分配一个线程，只需要1个或几个线程就能应对极大并发的请求，这种业务场景下servlet模型没有优势
+
+​		所以Zuul 1.X是基于servlet之上的一个阻塞式处理模型，即spring实现了处理所有request请求的servlet（DispatcherServlet）并由该servlet阻塞式处理。所以Springcloud Zuul无法摆脱servlet模型的弊端。
+
+### 2、WebFlux
+
+> [官网地址](https://docs.spring.io/spring/docs/current/spring-framework-reference/web-reactive.html#webflux-new-framework)
+
+​		传统的Web框架，比如说：struts2，springmvc等都是基于Servlet API与Servlet容器基础之上运行的。但是在Servlet3.1之后有了==异步非阻塞==的支持。而WebFlux是一个典型非阻塞异步的框架，它的核心是基于Reactor的相关API实现的。相对于传统的web框架来说，它可以运行在诸如Netty，Undertow及支持Servlet3.1的容器上。非阻塞式+函数式编程。
+
+​		Spring WebFlux 是 Spring 5.0 引入的新的响应式框架，区别于 Spring MVC，它不需要依赖Servlet API，它是完全异步非阻塞的，并且基于 Reactor 来实现响应式流规范。
+
+### 3、三大核心
+
+> Route(路由)：路由是构建网关的基本模块，它由ID，目标URI，一系列的断言和过滤器组成，如果断言为true则匹配该路由。
+>
+> Predicate(断言)：参考的是Java8的`java.util.function.Predicate`开发人员可以匹配HTTP请求中的所有内容(例如请求头或请求参数)，如果请求与断言相匹配则进行路由。
+>
+> Filter(过滤)：指的是Spring框架中`GatewayFilter`的实例，使用过滤器，可以在请求被路由前或者之后对请求进行修改。
+
+![image-20210526224925219](一、JAVA基础.assets/image-20210526224925219.png)
+
+​		web请求，通过一些匹配条件，定位到真正的服务节点。并在这个转发过程的前后，进行一些精细化控制。predicate就是我们的匹配条件；而filter，就可以理解为一个无所不能的拦截器。有了这两个元素，再加上目标uri，就可以实现一个具体的路由了。
+
+### 4、工作流程
+
+![image-20210526225105851](一、JAVA基础.assets/image-20210526225105851.png)
+
+
+​		客户端向 Spring Cloud Gateway 发出请求。然后在 Gateway Handler Mapping 中找到与请求相匹配的路由，将其发送到 Gateway Web Handler。Handler 再通过指定的过滤器链来将请求发送到我们实际的服务执行业务逻辑，然后返回。过滤器之间用虚线分开是因为过滤器可能会在发送代理请求之前（“pre”）或之后（“post”）执行业务逻辑。Filter在“pre”类型的过滤器可以做参数校验、权限校验、流量监控、日志输出、协议转换等，在“post”类型的过滤器中可以做响应内容、响应头的修改，日志的输出，流量监控等有着非常重要的作用。
+
+> 核心逻辑：路由转发+执行过滤器链
+
+### 5、使用
+
+```shell
+<dependency>
+	<groupId>org.springframework.cloud</groupId>
+	<artifactId>spring-cloud-starter-gateway</artifactId>
+</dependency>
+```
+
+```yaml
+spring:
+  application:
+    name: cloud-gateway
+  cloud:
+    gateway:
+      routes:
+        - id: payment_routh #payment_route    #路由的ID，没有固定规则但要求唯一，建议配合服务名
+          uri: http://localhost:8001          #匹配后提供服务的路由地址
+          predicates:
+            - Path=/payment/get/**         # 断言，路径相匹配的进行路由
+
+        - id: payment_routh2 #payment_route    #路由的ID，没有固定规则但要求唯一，建议配合服务名
+          uri: http://localhost:8001          #匹配后提供服务的路由地址
+          predicates:
+            - Path=/payment/lb/**         # 断言，路径相匹配的进行路由
+```
+
+![image-20210526225431216](一、JAVA基础.assets/image-20210526225431216.png)
+
+> 访问地址：http://localhost:9527/payment/get/31
+
+除了在yaml中配置路由映射外，还可以在代码中配置映射关系
+
+![image-20210526225825258](一、JAVA基础.assets/image-20210526225825258.png)
+
+```java
+@Configuration
+public class GateWayConfig{
+    /**
+     * 配置了一个id为route-name的路由规则，
+     * 当访问地址 http://localhost:9527/guonei时会自动转发到地址：http://news.baidu.com/guonei
+     * @param builder
+     * @return
+     */
+    @Bean
+    public RouteLocator customRouteLocator(RouteLocatorBuilder builder){
+        RouteLocatorBuilder.Builder routes = builder.routes();
+
+        routes.route("path_route_test_guonei", r -> r.path("/guonei").uri("http://news.baidu.com/guonei")).build();
+        return routes.build();
+    }
+    
+    @Bean
+    public RouteLocator customRouteLocator2(RouteLocatorBuilder builder){
+        RouteLocatorBuilder.Builder routes = builder.routes();
+        routes.route("path_route_test_guoji", r -> r.path("/guoji").uri("http://news.baidu.com/guoji")).build();
+        return routes.build();
+    }
+}
+```
+
+### 6、通过微服务名实现动态路由
+
+```yaml
+spring:
+  application:
+    name: cloud-gateway
+  cloud:
+    gateway:
+      discovery:
+        locator:
+          enabled: true #开启从注册中心动态创建路由的功能，利用微服务名进行路由
+      routes:
+        - id: payment_routh #payment_route    #路由的ID，没有固定规则但要求唯一，建议配合服务名
+          # uri: http://localhost:8001          #匹配后提供服务的路由地址
+          # 匹配后提供服务的路由地址,需要注意的是uri的协议为lb，表示启用Gateway的负载均衡功能。
+          uri: lb://cloud-payment-service #匹配后提供服务的路由地址
+          predicates:
+            - Path=/payment/get/**         # 断言，路径相匹配的进行路由
+
+        - id: payment_routh2 #payment_route    #路由的ID，没有固定规则但要求唯一，建议配合服务名
+          # uri: http://localhost:8001          #匹配后提供服务的路由地址
+          # 匹配后提供服务的路由地址,需要注意的是uri的协议为lb，表示启用Gateway的负载均衡功能。
+          # lb://serviceName是spring cloud gateway在微服务中自动为我们创建的负载均衡uri
+          uri: lb://cloud-payment-service 
+          predicates:
+            - Path=/payment/lb/**         # 断言，路径相匹配的进行路由
+```
+
+### 7、Predicate
+
+![image-20210526230418152](一、JAVA基础.assets/image-20210526230418152.png)
+
+​		Spring Cloud Gateway将路由匹配作为Spring WebFlux HandlerMapping基础架构的一部分。Spring Cloud Gateway包括许多内置的Route Predicate工厂。所有这些Predicate都与HTTP请求的不同属性匹配。多个Route Predicate工厂可以进行组合。
+
+![image-20210526234623555](一、JAVA基础.assets/image-20210526234623555.png)
+
+```java
+public class ZonedDateTimeDemo{
+    public static void main(String[] args){
+        // 获取时间串
+        ZonedDateTime zbj = ZonedDateTime.now(); // 默认时区
+        System.out.println(zbj);
+//        ZonedDateTime zny = ZonedDateTime.now(ZoneId.of("America/New_York")); // 用指定时区获取当前时间
+//        System.out.println(zny);
+    }
+}
+```
+
+![image-20210526234816644](一、JAVA基础.assets/image-20210526234816644.png)
+
+![image-20210526234833490](一、JAVA基础.assets/image-20210526234833490.png)
+
+```yaml
+spring:
+  application:
+    name: cloud-gateway
+  cloud:
+    gateway:
+      discovery:
+        locator:
+          enabled: true #开启从注册中心动态创建路由的功能
+      routes:
+        - id: payment_routh #payment_route    #路由的ID，没有固定规则但要求唯一，建议配合服务名
+          # uri: http://localhost:8001          #匹配后提供服务的路由地址
+          uri: lb://cloud-payment-service #匹配后提供服务的路由地址
+          predicates:
+            - Path=/payment/get/**         # 断言，路径相匹配的进行路由
+
+        - id: payment_routh2 #payment_route    #路由的ID，没有固定规则但要求唯一，建议配合服务名
+          # uri: http://localhost:8001          #匹配后提供服务的路由地址
+          uri: lb://cloud-payment-service #匹配后提供服务的路由地址
+          predicates:
+            - Path=/payment/lb/**         # 断言，路径相匹配的进行路由
+            #- After=2020-02-05T15:10:03.685+08:00[Asia/Shanghai]         # 断言，路径相匹配的进行路由
+            #- Before=2020-02-05T15:10:03.685+08:00[Asia/Shanghai]         # 断言，路径相匹配的进行路由
+            - Between=2020-02-02T17:45:06.206+08:00[Asia/Shanghai],2020-03-25T18:59:06.206+08:00[Asia/Shanghai]
+```
+
+​		Cookie Route Predicate需要两个参数，一个是 Cookie name ,一个是正则表达式。路由规则会通过获取对应的 Cookie name 值和正则表达式去匹配，如果匹配上就会执行路由，如果没有匹配上则不执行
+
+![image-20210526234938952](一、JAVA基础.assets/image-20210526234938952.png)
+
+​		两个参数：一个是属性名称和一个正则表达式，这个属性值和正则表达式匹配则执行。
+
+![image-20210526235100698](一、JAVA基础.assets/image-20210526235100698.png)
+
+![image-20210526235150650](一、JAVA基础.assets/image-20210526235150650.png)
+
+​		Host Route Predicate 接收一组参数，一组匹配的域名列表，这个模板是一个 ant 分隔的模板，用.号作为分隔符。
+它通过参数中的主机地址作为匹配规则。
+
+![image-20210526235248858](一、JAVA基础.assets/image-20210526235248858.png)
+
+![image-20210526235310202](一、JAVA基础.assets/image-20210526235310202.png)
+
+
+
+![image-20210526235334320](一、JAVA基础.assets/image-20210526235334320.png)
+
+​		支持传入两个参数，一个是属性名，一个为属性值，属性值可以是正则表达式。
+
+![image-20210526235403242](一、JAVA基础.assets/image-20210526235403242.png)
+
+### 8、Filter
+
+​		路由过滤器可用于修改进入的HTTP请求和返回的HTTP响应，路由过滤器只能指定路由进行使用。Spring Cloud Gateway 内置了多种路由过滤器，他们都由GatewayFilter的工厂类来产生。
+
+```yaml
+spring:
+  cloud:
+    gateway:
+      routes:
+        - id: payment_routh #payment_route #路由的ID，没有固定规则但要求唯一，建议配合服务名
+          uri: lb://cloud-provider-payment #匹配后的目标服务地址，供服务的路由地址
+          #uri: http://localhost:8001 #匹配后提供服务的路由地址
+          filters:
+            - AddRequestParameter=X-Request-Id,1024 
+            #过滤器工厂会在匹配的请求头加上一对请求头，名称为X-Request-Id值为1024
+```
+
+自定义全局GlobalFilter，implements GlobalFilter,Ordered，比如全局日志记录、统一网关鉴权等等
+
+```java
+@Component //必须加，必须加，必须加
+public class MyLogGateWayFilter implements GlobalFilter,Ordered
+{
+    @Override
+    public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain)
+    {
+        System.out.println("time:"+new Date()+"\t 执行了自定义的全局过滤器: "+"MyLogGateWayFilter"+"hello");
+
+        String uname = exchange.getRequest().getQueryParams().getFirst("uname");
+        if (uname == null) {
+            System.out.println("****用户名为null，无法登录");
+            exchange.getResponse().setStatusCode(HttpStatus.NOT_ACCEPTABLE);
+            return exchange.getResponse().setComplete();
+        }
+        return chain.filter(exchange);
+    }
+
+    // order越大越先z
+    @Override
+    public int getOrder()
+    {
+        return 0;
+    }
+}
+```
+
+
+
+
+
+
+
+
+
 
 
 ## **6、Config**
+
+
 
 
 
