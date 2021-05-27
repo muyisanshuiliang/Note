@@ -1510,96 +1510,706 @@ public class MyLogGateWayFilter implements GlobalFilter,Ordered
 }
 ```
 
+## （十）、Config分布式配置中心
+
+> [官网地址](https://cloud.spring.io/spring-cloud-static/spring-cloud-config/2.2.1.RELEASE/reference/html/)
+
+### 1、概述
+
+​		微服务意味着要将单体应用中的业务拆分成一个个子服务，每个服务的粒度相对较小，因此系统中会出现大量的服务。由于每个服务都需要必要的配置信息才能运行，所以一套==集中式的、动态的配置管理设施==是必不可少的。
+
+![image-20210527104118495](一、JAVA基础.assets/image-20210527104118495.png)
+
+​		Spring Cloud Config为微服务架构中的微服务提供集中化的外部配置支持，配置服务器为各个不同微服务应用的所有环境提供了一个中心化的外部配置。
+
+SpringCloud Config分为`服务端`和`客户端`两部分。
+
+​		服务端也称为分布式配置中心，它是一个独立的微服务应用，用来连接配置服务器并为客户端提供获取配置信息，加密/解密信息等访问接口
+
+​		客户端则是通过指定的配置中心来管理应用资源，以及与业务相关的配置内容，并在启动的时候从配置中心获取和加载配置信息配置服务器默认采用git来存储配置信息，这样就有助于对环境配置进行版本管理，并且可以通过git客户端工具来方便的管理和访问配置内容。
+
+**主要功能**：
+
+​	集中管理配置文件；
+
+​	不同环境不同配置，动态化的配置更新，分环境部署比如dev/test/prod/beta/release；
+
+​	运行期间动态调整配置，不再需要在每个服务部署的机器上编写配置文件，服务会向配置中心统一拉取配置自己的信息；
+
+​	当配置发生变动时，服务不需要重启即可感知到配置的变化并应用新的配置；
+
+​	将配置信息以REST接口的形式暴露。
+
+​		由于Spring Cloud Config默认使用Git来存储配置文件(也有其它方式,比如支持SVN和本地文件)，但最推荐的还是Git，而且使用的是http/https访问的形式。
+
+### 2、使用
+
+```shell
+<dependency>
+	<groupId>org.springframework.cloud</groupId>
+	<artifactId>spring-cloud-config-server</artifactId>
+</dependency>
+```
+
+```yaml
+server:
+  port: 3344
+
+spring:
+  application:
+    name:  cloud-config-center #注册进Eureka服务器的微服务名
+  cloud:
+    config:
+      server:
+        git:
+          uri: git@github.com:zzyybs/springcloud-config.git #GitHub上面的git仓库名字
+          ##搜索目录
+          search-paths:
+            - springcloud-config
+      ##读取分支
+      label: master
+
+#服务注册到eureka地址
+eureka:
+  client:
+    service-url:
+      defaultZone: http://localhost:7001/eureka
+```
+
+```java
+// 启动类添加该注解
+@EnableConfigServer
+```
+
+读取配置规则
+
+> http://config-3344.com:3344/master/config-dev.yml
+>
+> http://{服务域名}:{port}/{label}/{application}-{profile}.yml
+>
+> http://config-3344.com:3344/config-prod.yml
+>
+> http://{服务域名}:{port}/{application}-{profile}.yml
+>
+> http://config-3344.com:3344/config/test/master
+>
+> http://{服务域名}:{port}/{application}/{profile}[/{label}
+>
+> label：分支(branch)
+> name ：服务名
+> profile：环境(dev/test/prod)
+
+![image-20210527104849888](一、JAVA基础.assets/image-20210527104849888.png)
+
+### 3、Config客户端配置与测试
+
+​		`applicaiton.yml`是用户级的资源配置项`bootstrap.yml`是系统级的，优先级更加高，Spring Cloud会创建一个“Bootstrap Context”，作为Spring应用的`Application Context`的父上下文。初始化的时`Bootstrap Context`负责从外部源加载配置属性并解析配置。这两个上下文共享一个从外部获取的`Environment`。`Bootstrap`属性有高优先级，默认情况下，它们不会被本地配置覆盖。 `Bootstrap context`和`Application Context`有着不同的约定，所以新增了一个`bootstrap.yml`文件，保证`Bootstrap Context`和`Application Context`配置的分离。
+
+​		==要将Client模块下的application.yml文件改为bootstrap.yml,这是很关键的，==因为`bootstrap.yml`是比`application.yml`先加载的。
+
+```yaml
+server:
+  port: 3355
+
+spring:
+  application:
+    name: config-client
+  cloud:
+    #Config客户端配置
+    config:
+      label: master #分支名称
+      name: config #配置文件名称
+      profile: dev #读取后缀名称   上述3个综合：master分支上config-dev.yml的配置文件被读取http://config-3344.com:3344/master/config-dev.yml
+      uri: http://localhost:3344 #配置中心地址k
+
+#服务注册到eureka地址
+eureka:
+  client:
+    service-url:
+      defaultZone: http://localhost:7001/eureka
+```
+
+![image-20210527110444537](一、JAVA基础.assets/image-20210527110444537.png)
+
+​		Linux运维修改GitHub上的配置文件内容做调整，==Config Server配置中心立刻响应，Config Client客户端没有任何响应，除非重启或者重新加载==。
+
+### 4、动态刷新
+
+在Config Client客户端增加配置：
+
+```shell
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-actuator</artifactId>
+</dependency>
+```
+
+```yaml
+# 暴露监控端点
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "*"
+```
+
+```java
+@RestController
+// 在获取配置文件配置上增加 注解 @RefreshScope
+@RefreshScope
+public class ConfigClientController
+{
+    @Value("${config.info}")
+    private String configInfo;
+
+    @GetMapping("/configInfo")
+    public String getConfigInfo() {
+        return configInfo;
+    }
+}
+```
+
+​		但是进行了配置之后，需要运维人员发送Post请求刷新到指定地址端口，如果服务过多，发送此种请求的方式增多，无形中增加了运维人员的工作量。
+
+```shell
+curl -X POST "http://localhost:3355/actuator/refresh"
+```
+
+## （十一）、Bus总线
+
+### 1、概述
+
+​		Spring Cloud Bus能管理和传播分布式系统间的消息，就像一个分布式执行器，可用于广播状态更改、事件推送等，也可以当作微服务间的通信通道。
+
+​		在微服务架构的系统中，通常会使用轻量级的消息代理来构建一个共用的消息主题，并让系统中所有微服务实例都连接上来。由于该主题中==产生的消息会被所有实例监听和消费，所以称它为消息总线==。在总线上的各个实例，都可以方便地广播一些需要让其他连接在该主题上的实例都知道的消息。
+
+​		Config Client实例都监听MQ中同一个topic(默认是`springCloudBus`)。当一个服务刷新数据的时候，它会把这个信息放入到Topic中，这样其它监听同一Topic的服务就能得到通知，然后去更新自身的配置。
+
+![image-20210527112536896](一、JAVA基础.assets/image-20210527112536896.png)
+
+​		Spring Cloud Bus 配合 Spring Cloud Config 使用可以实现配置的动态刷新。Spring Cloud Bus是用来将分布式系统的节点与轻量级消息系统链接起来的框架，它整合了Java的事件处理机制和消息中间件的功能。==Spring Cloud Bus目前支持RabbitMQ和Kafka==。
+
+![image-20210527112741867](一、JAVA基础.assets/image-20210527112741867.png)
+
+1）利用消息总线触发一个客户端/bus/refresh,而刷新所有客户端的配置
+
+![image-20210527112920529](一、JAVA基础.assets/image-20210527112920529.png)
+
+2）利用消息总线触发一个服务端ConfigServer的/bus/refresh端点，而刷新所有客户端的配置
+
+![image-20210527112930070](一、JAVA基础.assets/image-20210527112930070.png)
+
+第二种架构显然更加适合，第一种不适合的原因如下：
+
+​		1）打破了微服务的职责单一性，因为微服务本身是业务模块，它本不应该承担配置刷新的职责。
+
+​		2）破坏了微服务各节点的对等性。
+
+​		3）有一定的局限性。例如，微服务在迁移时，它的网络地址常常会发生变化，此时如果想要做到自动刷新，那就会增加更多的修改。
+
+### 2、使用（全局广播）
+
+Config Server端：
+
+```shell
+<!--添加消息总线RabbitMQ支持-->
+<dependency>
+    <groupId>org.springframework.cloud</groupId>
+    <artifactId>spring-cloud-starter-bus-amqp</artifactId>
+</dependency>
+```
+
+```yaml
+##rabbitmq相关配置,暴露bus刷新配置的端点
+management:
+  endpoints: #暴露bus刷新配置的端点
+    web:
+      exposure:
+        include: 'bus-refresh'
+```
+
+Config Client端：
+
+```shell
+<!--添加消息总线RabbitMQ支持-->
+<dependency>
+    <groupId>org.springframework.cloud</groupId>
+    <artifactId>spring-cloud-starter-bus-amqp</artifactId>
+</dependency>
+```
+
+```yaml
+#rabbitmq相关配置 15672是Web管理界面的端口；5672是MQ访问的端口
+rabbitmq:
+	host: localhost
+	port: 5672
+	username: guest
+	password: guest
+```
+
+修改配置文件后，一处发送，处处生效：
+
+```shell
+curl -X POST "http://localhost:3344/actuator/bus-refresh"
+```
+
+### 3、使用（定点通知）
+
+​		指定==具体某一个实例生效而不是全部==，`/bus/refresh`请求不再发送到具体的服务实例上，而是发给config server，并通过`destination`参数类指定需要更新配置的服务或实例。
+
+![image-20210527113645565](一、JAVA基础.assets/image-20210527113645565.png)
+
+通知格式：
+
+```shell
+curl -X POST "http://localhost:3344/actuator/bus-refresh/config-client:3355"
+# 公式：http://localhost:配置中心的端口号/actuator/bus-refresh/{destination}
+```
+
+## （十二）、Stream消息驱动
+
+> [官网地址](https://spring.io/projects/spring-cloud-stream#overview)、[学习手册1](https://cloud.spring.io/spring-cloud-static/spring-cloud-stream/3.0.1.RELEASE/reference/html/)、[中文指导手册](https://m.wang1314.com/doc/webapp/topic/20971999.html)
+
+### 1、概述
+
+​		官方定义 Spring Cloud Stream 是一个构建消息驱动微服务的框架。应用程序通过 inputs 或者 outputs 来与 Spring Cloud Stream中binder对象交互。通过我们配置来binding(绑定) ，而 Spring Cloud Stream 的 binder对象负责与消息中间件交互。所以，我们只需要搞清楚如何与 Spring Cloud Stream 交互就可以方便使用消息驱动的方式。
+
+​		通过使用Spring Integration来连接消息代理中间件以实现消息事件驱动。Spring Cloud Stream 为一些供应商的消息中间件产品提供了个性化的自动化配置实现，引用了发布-订阅、消费组、分区的三个核心概念。==目前仅支持RabbitMQ、Kafka==。
+
+​		标准MQ
+
+![image-20210527115639026](一、JAVA基础.assets/image-20210527115639026.png)
+
+​		当用到了RabbitMQ和Kafka，由于这两个消息中间件的架构上的不同，像RabbitMQ有exchange，kafka有Topic和Partitions分区，这些中间件的差异性导致实际项目开发中造成了一定的困扰，如果用了两个消息队列的其中一种，后面的业务需求，想往另外一种消息队列进行迁移，这时候无疑就是一个灾难性的，一大堆东西都要重新推倒重新做，因为它跟系统耦合了，这时候springcloud Stream给我们提供了一种解耦合的方式。
+
+![image-20210527115732572](一、JAVA基础.assets/image-20210527115732572.png)
+
+### 2、Binder
+
+​		在没有绑定器这个概念的情况下，我们的SpringBoot应用要直接与消息中间件进行信息交互的时候，由于各消息中间件构建的初衷不同，它们的实现细节上会有较大的差异性，通过定义绑定器作为中间层，完美地实现了应用程序与消息中间件细节之间的隔离。Stream对消息中间件的进一步封装，可以做到代码层面对中间件的无感知，甚至于动态的切换中间件(rabbitmq切换为kafka)，使得微服务开发的高度解耦，服务可以关注更多自己的业务流程
+
+
+​		==通过定义绑定器Binder作为中间层，实现了应用程序与消息中间件细节之间的隔离==。
+
+![image-20210527120405159](一、JAVA基础.assets/image-20210527120405159.png)
+
+![image-20210527120437192](一、JAVA基础.assets/image-20210527120437192.png)
+
+> Binder：很方便的连接中间件，屏蔽差异
+>
+> Channel：通道，是队列Queue的一种抽象，在消息通讯系统中就是实现存储和转发的媒介，通过Channel对队列进行配置
+>
+> Source和Sink：简单的可理解为参照对象是Spring Cloud Stream自身，从Stream发布消息就是输出，接受消息就是输入。
+
+![image-20210527120557695](一、JAVA基础.assets/image-20210527120557695.png)
+
+### 3、使用
+
+```shell
+<dependency>
+	<groupId>org.springframework.cloud</groupId>
+	<artifactId>spring-cloud-starter-stream-rabbit</artifactId>
+</dependency>
+```
+
+消息驱动之生产者：
+
+```yaml
+server:
+  port: 8801
+
+spring:
+  application:
+    name: cloud-stream-provider
+  cloud:
+      stream:
+        binders: # 在此处配置要绑定的rabbitmq的服务信息；
+          defaultRabbit: # 表示定义的名称，用于于binding整合
+            type: rabbit # 消息组件类型
+            environment: # 设置rabbitmq的相关的环境配置
+              spring:
+                rabbitmq:
+                  host: localhost
+                  port: 5672
+                  username: guest
+                  password: guest
+        bindings: # 服务的整合处理
+          output: # 这个名字是一个通道的名称
+            destination: studyExchange # 表示要使用的Exchange名称定义
+            content-type: application/json # 设置消息类型，本次为json，文本则设置“text/plain”
+            binder: defaultRabbit # 设置要绑定的消息服务的具体设置
+```
+
+```java
+// 业务类
+@EnableBinding(Source.class) // 可以理解为是一个消息的发送管道的定义
+public class MessageProviderImpl implements IMessageProvider
+{
+    @Resource
+    private MessageChannel output; // 消息的发送管道
+
+    @Override
+    public String send()
+    {
+        String serial = UUID.randomUUID().toString();
+        this.output.send(MessageBuilder.withPayload(serial).build()); // 创建并发送消息
+        System.out.println("***serial: "+serial);
+
+        return serial;
+    }
+}
+ 
+```
+
+消息驱动之消费者：
+
+```yaml
+server:
+  port: 8802
+
+spring:
+  application:
+    name: cloud-stream-consumer
+  cloud:
+      stream:
+        binders: # 在此处配置要绑定的rabbitmq的服务信息；
+          defaultRabbit: # 表示定义的名称，用于于binding整合
+            type: rabbit # 消息组件类型
+            environment: # 设置rabbitmq的相关的环境配置
+              spring:
+                rabbitmq:
+                  host: localhost
+                  port: 5672
+                  username: guest
+                  password: guest
+        bindings: # 服务的整合处理
+          input: # 这个名字是一个通道的名称
+            destination: studyExchange # 表示要使用的Exchange名称定义
+            content-type: application/json # 设置消息类型，本次为对象json，如果是文本则设置“text/plain”
+            binder: defaultRabbit # 设置要绑定的消息服务的具体设置
+```
+
+```java
+@Component
+@EnableBinding(Sink.class)
+public class ReceiveMessageListener
+{
+    @Value("${server.port}")
+    private String serverPort;
+
+    @StreamListener(Sink.INPUT)
+    public void input(Message<String> message)
+    {
+        System.out.println("消费者1号，------->接收到的消息：" + message.getPayload()+"\t port: "+serverPort);
+    }
+}
+```
+
+### 4、分组消费与持久化
+
+​		比如在如下场景中，订单系统我们做集群部署，都会从RabbitMQ中获取订单信息，那如果一个订单同时被两个服务获取到，那么就会造成数据错误，我们得避免这种情况。这时我们就可以使用Stream中的消息分组来解决：
+
+![image-20210527121531016](一、JAVA基础.assets/image-20210527121531016.png)
+
+​		分布式微服务应用为了实现高可用和负载均衡，实际上都会部署多个实例，多数情况，生产者发送消息给某个具体微服务时只希望被消费一次，按照上面我们启动两个应用的例子，虽然它们同属一个应用，但是这个消息出现了被重复消费两次的情况。为了解决这个问题，在Spring Cloud Stream中提供了消费组的概念。
+
+​		注意在Stream中处于同一个group中的多个消费者是竞争关系，就能够==保证消息只会被其中一个应用消费一次。不同组是可以全面消费的(重复消费)，同一组内会发生竞争关系，只有其中一个可以消费==。
+
+```yaml
+server:
+  port: 8802
+
+spring:
+  application:
+    name: cloud-stream-consumer
+  cloud:
+      stream:
+        binders: # 在此处配置要绑定的rabbitmq的服务信息；
+          defaultRabbit: # 表示定义的名称，用于于binding整合
+            type: rabbit # 消息组件类型
+            environment: # 设置rabbitmq的相关的环境配置
+              spring:
+                rabbitmq:
+                  host: localhost
+                  port: 5672
+                  username: guest
+                  password: guest
+        bindings: # 服务的整合处理
+          input: # 这个名字是一个通道的名称，在分析具体源代码的时候会进行说明
+            destination: studyExchange # 表示要使用的Exchange名称定义
+            content-type: application/json # 设置消息类型，本次为对象json，如果是文本则设置“text/plain”
+     		binder: defaultRabbit # 设置要绑定的消息服务的具体设置
+            group: test_group
+```
+
+​		如果未配置分组属性，则该服务不能消费到其宕机期间产生的消息，而配置了分组属性的服务则可以消费到期间产生的消息。
+
+## （十三）、Sleuth链路跟踪
+
+> [官网地址](https://github.com/spring-cloud/spring-cloud-sleuth)
+
+### 1、概述
+
+​		在微服务框架中，一个由客户端发起的请求在后端系统中会经过多个不同的的服务节点调用来协同产生最后的请求结果，每一个前段请求都会形成一条复杂的分布式服务调用链路，链路中的任何一环出现高延时或错误都会引起整个请求最后的失败。
+
+​		Sleuth提供了一套完整的服务跟踪的解决方案，在分布式系统中提供追踪解决方案并且兼容支持了zipkin
+
+![image-20210527114247368](一、JAVA基础.assets/image-20210527114247368.png)
+
+ 表示一请求链路，一条链路通过Trace Id唯一标识，Span标识发起的请求信息，各span通过parent id 关联起来
+
+![image-20210527114809498](一、JAVA基础.assets/image-20210527114809498.png)
+
+一条链路通过==Trace Id唯一标识==，Span标识发起的请求信息，各span==通过parent id 关联起来==。
+
+![image-20210527115243399](一、JAVA基础.assets/image-20210527115243399.png)
+
+### 2、使用
+
+```shell
+<dependency>
+	<groupId>org.springframework.cloud</groupId>
+	<artifactId>spring-cloud-starter-zipkin</artifactId>
+</dependency>
+```
+
+```yaml
+spring:
+  application:
+    name: cloud-payment-service
+  zipkin:
+    base-url: http://localhost:9411
+  sleuth:
+    sampler:
+      #采样率值介于 0 到 1 之间，1 则表示全部采集
+     probability: 1
+```
+
+> 打开浏览器访问，查看链路追踪情况：http://localhost:9411
+
+## （十四）、SpringCloud Alibaba简介
+
+> [官网地址](https://github.com/alibaba/spring-cloud-alibaba/blob/master/README-zh.md)、[源码地址](![image-20210527135452232](一、JAVA基础.assets/image-20210527135452232.png))、[中文地址](https://github.com/alibaba/spring-cloud-alibaba/blob/master/README-zh.md)
+
+​		Spring Cloud Alibaba 致力于提供微服务开发的一站式解决方案。此项目包含开发分布式应用微服务的必需组件，方便开发者通过 Spring Cloud 编程模型轻松使用这些组件来开发分布式应用服务。依托 Spring Cloud Alibaba，您只需要添加一些注解和少量配置，就可以将 Spring Cloud 应用接入阿里微服务解决方案，通过阿里中间件来迅速搭建分布式应用系统。		
+
+​		**服务限流降级**：默认支持 Servlet、Feign、RestTemplate、Dubbo 和 RocketMQ 限流降级功能的接入，可以在运行时通过控制台实时修改限流降级规则，还支持查看限流降级 Metrics 监控。
+​		**服务注册与发现**：适配 Spring Cloud 服务注册与发现标准，默认集成了 Ribbon 的支持。
+​		**分布式配置管理**：支持分布式系统中的外部化配置，配置更改时自动刷新。
+​		**消息驱动能力**：基于 Spring Cloud Stream 为微服务应用构建消息驱动能力。
+​		**阿里云对象存储**：阿里云提供的海量、安全、低成本、高可靠的云存储服务。支持在任何应用、任何时间、任何地点存储和访问任意类型的数据。
+​		**分布式任务调度**：提供秒级、精准、高可靠、高可用的定时（基于 Cron 表达式）任务调度服务。同时提供分布式的任务执行模型，如网格任务。网格任务支持海量子任务均匀分配到所有 Worker（schedulerx-client）上执行。
+
+![image-20210527135426523](一、JAVA基础.assets/image-20210527135426523.png)
+
+## （十五）、Nacos服务注册和配置中心
+
+> 名字来历：**Na**ming **Co**nfiguration **S**ervice。
+>
+> [官网地址](https://github.com/alibaba/Nacos)、[官网文档1](https://nacos.io/zh-cn/index.html)、[官网文档2](https://spring-cloud-alibaba-group.github.io/github-pages/greenwich/spring-cloud-alibaba.html#_spring_cloud_alibaba_nacos_discovery)、[下载地址](https://github.com/alibaba/nacos/releases)
+
+### 1、概述
+
+> Nacos = Eureka+Config +Bus
+>
+> 替代Eureka做服务注册中心
+>
+> 替代Config做服务配置中心
+
+![image-20210527140200856](一、JAVA基础.assets/image-20210527140200856.png)
+
+### 2、安装使用
+
+解压安装包，直接运行bin目录下启动文件即可，访问`http://localhost:8848/nacos`，默认账号密码都是nacos。
+
+![image-20210527140401052](一、JAVA基础.assets/image-20210527140401052.png)
+
+```shell
+<dependency>
+	<groupId>com.alibaba.cloud</groupId>
+	<artifactId>spring-cloud-alibaba-dependencies</artifactId>
+	<version>2.1.0.RELEASE</version>
+	<type>pom</type>
+	<scope>import</scope>
+</dependency>
+<!--SpringCloud ailibaba nacos -->
+	<dependency>
+	<groupId>com.alibaba.cloud</groupId>
+	<artifactId>spring-cloud-starter-alibaba-nacos-discovery</artifactId>
+</dependency>
+```
+
+```yaml
+server:
+  port: 9001
+
+spring:
+  application:
+    name: nacos-payment-provider
+  cloud:
+    nacos:
+      discovery:
+        server-addr: localhost:8848 #配置Nacos地址
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: '*'
+        
+# 主启动类添加注解
+@EnableDiscoveryClient
+```
+
+![image-20210527140711003](一、JAVA基础.assets/image-20210527140711003.png)
+
+nacos自带负载均衡
+
+![image-20210527141020429](一、JAVA基础.assets/image-20210527141020429.png)
+
+```java
+@Configuration
+public class ApplicationContextBean{
+    @Bean
+    @LoadBalanced
+    public RestTemplate getRestTemplate(){
+        return new RestTemplate();
+    }
+}
+```
+
+### 3、三种服务注册与发现的对比
+
+![image-20210527141224422](一、JAVA基础.assets/image-20210527141224422.png)
+
+![image-20210527141245514](一、JAVA基础.assets/image-20210527141245514.png)
+		一般来说，如果不需要存储服务级别的信息且服务实例是通过nacos-client注册，并能够保持心跳上报，那么就可以选择AP模式。当前主流的服务如 Spring cloud 和 Dubbo 服务，都适用于AP模式，AP模式为了服务的可能性而减弱了一致性，因此AP模式下只支持注册临时实例。
+
+​		如果需要在服务级别编辑或者存储配置信息，那么 CP 是必须，K8S服务和DNS服务则适用于CP模式。CP模式下则支持注册持久化实例，此时则是以 Raft 协议为集群运行模式，该模式下注册实例之前必须先注册服务，如果服务不存在，则会返回错误。
+
+```shell
+# Nacos AP与CP之间切换
+curl -X PUT '$NACOS_SERVER:8848/nacos/v1/ns/operator/switches?entry=serverMode&value=CP'
+```
+
+### 4、Nacos作为配置中心
+
+```shell
+<dependency>
+	<groupId>com.alibaba.cloud</groupId>
+	<artifactId>spring-cloud-starter-alibaba-nacos-config</artifactId>
+</dependency>
+```
+
+​		Nacos同springcloud-config一样，在项目初始化时，要保证先从配置中心进行配置拉取，拉取配置之后，才能保证项目的正常启动。springboot中配置文件的加载是存在优先级顺序的，==bootstrap优先级高于application==
+
+```yaml
+# bootstrap nacos配置
+server:
+  port: 3377
+
+spring:
+  application:
+    name: nacos-config-client
+  cloud:
+    nacos:
+      discovery:
+        server-addr: localhost:8848 #Nacos服务注册中心地址
+      config:
+        server-addr: localhost:8848 #Nacos作为配置中心地址
+        file-extension: yaml #指定yaml格式的配置
+        
+        
+# application nacos配置
+spring:
+  profiles:
+    active: dev # 表示开发环境
+
+# 在控制器类加入@RefreshScope注解使当前类下的配置支持Nacos的动态刷新功能。
+@RefreshScope 
+```
+
+>  Nacos在配置中心的数据格式：[说明地址](https://nacos.io/zh-cn/docs/quick-start-spring-cloud.html)
+>
+> 最后公式：
+> ${spring.application.name}-${spring.profiles.active}.${spring.cloud.nacos.config.file-extension}
+
+![image-20210527142008359](一、JAVA基础.assets/image-20210527142008359.png)
+
+![image-20210527142211711](一、JAVA基础.assets/image-20210527142211711.png)
+
+​		Nacos会记录配置文件的历史版本默认保留30天，此外还有一键回滚功能，回滚操作将会触发配置更新
+
+
+
+## （十六）、Sentinel实现熔断与限流
+
+
+
+## （十七）、Seata处理分布式事务
+
+# 三、SpringBoot
 
 
 
 
 
+# 四、Spring
 
+## （一）、bean的生命周期
 
+1. class：根据反射获取类
 
+2. 推断构造方法：获取类的`构造方法`，类中只要有`无参构造方法`，就用`无参构造方法`，如果没有`无参构造方法`，只有唯一的`构造方法`。如果既没有`无参构造方法`，同时存在多个`有参构造方法`，会报错。参数注入是以`byType`、`byName`的形式从容器中查找。
 
+3.  实例化：
 
-## **6、Config**
-
-
-
-
-
-## **7、Sleuth**
-
-
-
-## **8、Stream**
-
-
-
-## **9、Security**
-
-
-
-# **三、SpringBoot**
-
-
-
-
-
-# **四、Spring**
-
-## **（一）、bean的生命周期**
-
-1. **class：根据反射获取类**
-
-2. **推断构造方法：获取类的`构造方法`，类中只要有`无参构造方法`，就用`无参构造方法`，如果没有`无参构造方法`，只有唯一的`构造方法`。如果既没有`无参构造方法`，同时存在多个`有参构造方法`，会报错。参数注入是以`byType`、`byName`的形式从容器中查找。**
-
-3.  **实例化：**
-
-   >**`byType`：如果直接通过`byName`去查找，可能同时会找到不是该类型的bean；**
+   >`byType`：如果直接通过`byName`去查找，可能同时会找到不是该类型的bean；
    >
-   >**`byName(形参名称)`：如果根据类型找到多个bean，此时就可以通过`byName`，要么找到一个bean，要么什么也没有。**
+   >`byName(形参名称)`：如果根据类型找到多个bean，此时就可以通过`byName`，要么找到一个bean，要么什么也没有。
    >
-   >**如果没找到，报错**
+   >如果没找到，报错
    >
-   >**==推断构造方法==：如果一个方法中注入多个相同的bean，`byType`只找到一个，那么所有参数用的都是同一个对象， 不会在乎参数的名称，如果找到多个，再根据`byName`去判断。**
+   >==推断构造方法==：如果一个方法中注入多个相同的bean，`byType`只找到一个，那么所有参数用的都是同一个对象， 不会在乎参数的名称，如果找到多个，再根据`byName`去判断。
 
-4. **获取对象**
+4. 获取对象
 
-5. **属性填充**
+5. 属性填充
 
-6. **==初始化==**
+6. ==初始化==
 
-   > **==初始化的两种方式==：**
+   > ==初始化的两种方式==：
    >
-   > **1、继承`InitializingBean`接口，执行方法`afterPropertiesSet()`；**
+   > 1、继承`InitializingBean`接口，执行方法`afterPropertiesSet()`；
    >
-   > **2、在bean内定义任意方法，标准`@PostConstruct`。**
+   > 2、在bean内定义任意方法，标准`@PostConstruct`。
 
-7. **==AOP==**
+7. ==AOP==
 
-   > **==AOP==：**
+   > ==AOP==：
    >
-   > **从容器中找到所有的切点，然后对切点进行匹配，如果当前对象有对应的切点，第一次匹配完成之后存入缓存，后面直接从缓存中获取，`CGLIB`动态代理生成代理对象继承当前对象，重写父类方法，在该方法中执行切点方法以及对象的方法。**
+   > 从容器中找到所有的切点，然后对切点进行匹配，如果当前对象有对应的切点，第一次匹配完成之后存入缓存，后面直接从缓存中获取，`CGLIB`动态代理生成代理对象继承当前对象，重写父类方法，在该方法中执行切点方法以及对象的方法。
    >
-   > **只有开启了`@EnableAspectJAutoProxy`才会执行`AOP`的判断，最终注入容器的`bean`是代理对象。**
+   > 只有开启了`@EnableAspectJAutoProxy`才会执行`AOP`的判断，最终注入容器的`bean`是代理对象。
    >
-   > **代理对象中的属性没有值，因为`aop`的主要目的是为了`执行额外的逻辑`。**
+   > 代理对象中的属性没有值，因为`aop`的主要目的是为了`执行额外的逻辑`。
 
-8. **代理对象**
+8. 代理对象
 
-9. **对象放入bean容器**
+9. 对象放入bean容器
 
-## **（二）、循环依赖**
+## （二）、循环依赖
 
-1. **实例化对象，将其放到一个Map中，**
-2. **填充依赖对象属性**
-3. **在单例池中查找依赖对象**
-4. **找到注入，找不到创建依赖对象**
+1. 实例化对象，将其放到一个Map中，
+2. 填充依赖对象属性
+3. 在单例池中查找依赖对象
+4. 找到注入，找不到创建依赖对象
 
-> **属性中注入的是代理对象，这样AOP才有效果。**
+> 属性中注入的是代理对象，这样AOP才有效果。
 
-### **1、什么是循环依赖**
+### 1、什么是循环依赖
 
-**举个例子**
+举个例子
 
 ```
 public class A {
@@ -1611,19 +2221,19 @@ public class B {
 }
 ```
 
-**再看个简单的图：**
+再看个简单的图：
 
 **![一文深入分析阿里Java二面神仙问题：Spring循环依赖](https://p3-tt.byteimg.com/origin/pgc-image/d3b54f2fb12242a1bced93a7bd5e6c70?from=pc)**
 
 
 
-​		**像这样，创建 a 的时候需要依赖 b，那就创建 b，结果创建 b 的时候又需要依赖 a，那就创建 a，创建 a 的时候需要依赖 b，那就创建 b，结果创建 b 的时候又需要依赖 a ……**
+​		像这样，创建 a 的时候需要依赖 b，那就创建 b，结果创建 b 的时候又需要依赖 a，那就创建 a，创建 a 的时候需要依赖 b，那就创建 b，结果创建 b 的时候又需要依赖 a ……
 
-**互相依赖何时了，死循环了吧？ 诺，这就是循环依赖！**
+互相依赖何时了，死循环了吧？ 诺，这就是循环依赖！
 
 ------
 
-​		**循环依赖其实不算个问题或者错误，我们实际在开发的时候，也可能会用到。 再拿最开始的 A 和 B 来说，我们手动使用的时候会用以下方式：**
+​		循环依赖其实不算个问题或者错误，我们实际在开发的时候，也可能会用到。 再拿最开始的 A 和 B 来说，我们手动使用的时候会用以下方式：
 
 ```java
   A a = new A();
@@ -1632,21 +2242,21 @@ public class B {
   a.setB(b);
 ```
 
-**其实这样就解决了循环依赖，功能上是没有问题的，但是为什么 Spring 要解决循环依赖？**
+其实这样就解决了循环依赖，功能上是没有问题的，但是为什么 Spring 要解决循环依赖？
 
-### **2、为什么 Spring 要解决循环依赖？**
+### 2、为什么 Spring 要解决循环依赖？
 
-​		**首先简单了解下，我们用 Spring 框架，它帮我们做了什么事情？总结上来说，六字真言：IoC 和 AOP。**
+​		首先简单了解下，我们用 Spring 框架，它帮我们做了什么事情？总结上来说，六字真言：IoC 和 AOP。
 
-> **IoC：主要是将对象的`创建、管理`都交给了 Spring 来管理，能够解决对象之间的`耦合`问题，对开发人员来说也是`省时省力`的。**
+> IoC：主要是将对象的`创建、管理`都交给了 Spring 来管理，能够解决对象之间的`耦合`问题，对开发人员来说也是`省时省力`的。
 >
-> **AOP：主要是在不改变原有业务逻辑情况下，增强`横切逻辑代码`，也是`解耦合`，避免横切逻辑`代码重复`；也是对 OOP 的`延续、补充`。**
+> AOP：主要是在不改变原有业务逻辑情况下，增强`横切逻辑代码`，也是`解耦合`，避免横切逻辑`代码重复`；也是对 OOP 的`延续、补充`。
 
-### **3、解决循环依赖的方式**
+### 3、解决循环依赖的方式
 
-​		**参考我们能想到的肯定是手动处理的方式，先将对象都 `new` 出来，然后进行` set `属性值，而 Spring 也是通过这样的形式来处理的，其实 Spring 管理 Bean 的实例化底层其实是由反射实现的。**
+​		参考我们能想到的肯定是手动处理的方式，先将对象都 `new` 出来，然后进行` set `属性值，而 Spring 也是通过这样的形式来处理的，其实 Spring 管理 Bean 的实例化底层其实是由反射实现的。
 
-​		**而我们实例化的方式也有好多种，比如通过构造函数，一次性将属性赋值，像下面这样**
+​		而我们实例化的方式也有好多种，比如通过构造函数，一次性将属性赋值，像下面这样
 
 ```java
 // 假设有学生这个类
@@ -1664,24 +2274,24 @@ public class Student {
 new Student(1, "Suremotoo");
 ```
 
-​		**但是使用构造器这样的方式，是无法解决循环依赖的！为什么不能呢？**
+​		但是使用构造器这样的方式，是无法解决循环依赖的！为什么不能呢？
 
-​		**我们还是以文中开头的 A 和 B 互相依赖来说, 要通过构造器的方式实现 A 的实例化，如下**
+​		我们还是以文中开头的 A 和 B 互相依赖来说, 要通过构造器的方式实现 A 的实例化，如下
 
 ```java
 new A(b);
 ```
 
-​		**要通过构造器的方式，首先要将属性值实例化出来！A 要依赖属性 b，就需要先将 B 实例化，可是 B 的实例化是不是还是需要依赖 A，所以通过构造器的方式，Spring 也没有办法解决循环依赖。**
+​		要通过构造器的方式，首先要将属性值实例化出来！A 要依赖属性 b，就需要先将 B 实例化，可是 B 的实例化是不是还是需要依赖 A，所以通过构造器的方式，Spring 也没有办法解决循环依赖。
 
-​		**既然底层是通过反射实现的，我们自己也用反射实现的话，大概思路是这样的（还是以 A 和 B 为例）**
+​		既然底层是通过反射实现的，我们自己也用反射实现的话，大概思路是这样的（还是以 A 和 B 为例）
 
-1. **先实例化 A 类**
-2. **再实例化 B 类**
-3. **set B 类中的 a 属性**
-4. **set A 类中的 b 属性**
+1. 先实例化 A 类
+2. 再实例化 B 类
+3. set B 类中的 a 属性
+4. set A 类中的 b 属性
 
-**其实就是通过反射，实现以下代码**
+其实就是通过反射，实现以下代码
 
 ```java
       A a = new A();
@@ -1690,17 +2300,17 @@ new A(b);
       a.setB(b);
 ```
 
-> **A a = new A()，说明 A 只是实例化，还未初始化**
+> A a = new A()，说明 A 只是实例化，还未初始化
 >
-> **同理，B b = new B() 也只是实例化，并未初始化**
+> 同理，B b = new B() 也只是实例化，并未初始化
 >
-> **a.setB(b);, 对 a 的属性赋值，完成 a 的初始化**
+> a.setB(b);, 对 a 的属性赋值，完成 a 的初始化
 >
-> **b.setA(a);, 对 b 的属性赋值，完成 b 的初始化**
+> b.setA(a);, 对 b 的属性赋值，完成 b 的初始化
 
-### **4、Spring 如何解决循环依赖问题**
+### 4、Spring 如何解决循环依赖问题
 
-​		**三级缓存。**
+​		三级缓存。
 
 ```java
   /**
@@ -1726,25 +2336,25 @@ new A(b);
   Map<String, ObjectFactory<?>> singletonFactories = new HashMap<>(16);
 ```
 
-​		**Spring 管理的 Bean 其实默认都是单例的，也就是说 Spring 将最终可以使用的 Bean 统一放入第一级缓存中，也就是 singletonObjects（单例池）里，以后凡是用到某个 Bean 了都从这里获取就行了。**
+​		Spring 管理的 Bean 其实默认都是单例的，也就是说 Spring 将最终可以使用的 Bean 统一放入第一级缓存中，也就是 singletonObjects（单例池）里，以后凡是用到某个 Bean 了都从这里获取就行了。
 
-**==单例bean（只保证在单例池中有一个名字的单例bean，但是该类型的bean可能有多个） 不等于单例模式==**
+==单例bean（只保证在单例池中有一个名字的单例bean，但是该类型的bean可能有多个） 不等于单例模式==
 
-### **5、仅使用一级缓存可以吗？**
+### 5、仅使用一级缓存可以吗？
 
-​		**既然都从`singletonObjects `里获取，那么仅仅使用这一个` singletonObjects`，可以吗？肯定不可以的。 首先 `singletonObjects` 存入的是完全初始化好的 Bean，可以拿来直接用的。 如果我们直接将未初始化完的 Bean 放在 singletonObjects 里面，注意，这个未初始化完的 Bean 极有可能会被其他的类拿去用，它都没完事呢，就被拿去造了，肯定要出事啊！**
+​		既然都从`singletonObjects `里获取，那么仅仅使用这一个` singletonObjects`，可以吗？肯定不可以的。 首先 `singletonObjects` 存入的是完全初始化好的 Bean，可以拿来直接用的。 如果我们直接将未初始化完的 Bean 放在 singletonObjects 里面，注意，这个未初始化完的 Bean 极有可能会被其他的类拿去用，它都没完事呢，就被拿去造了，肯定要出事啊！
 
-### **6、使用二级缓存可以吗？**
+### 6、使用二级缓存可以吗？
 
-​		**再来回顾下循环依赖的问题：A→B→A→B……。说到底就是怎么打破这个循环，一级缓存不行，我们就再加一级，可以吗？ 我们看个图**
+​		再来回顾下循环依赖的问题：A→B→A→B……。说到底就是怎么打破这个循环，一级缓存不行，我们就再加一级，可以吗？ 我们看个图**
 
 **![一文深入分析阿里Java二面神仙问题：Spring循环依赖](https://p3-tt.byteimg.com/origin/pgc-image/017d5bde778049b6b9c6b752ef4db15d?from=pc)**
 
 
 
-> **图中的缓存就是二级缓存**
+> 图中的缓存就是二级缓存
 
-​		**看完图，可能还会有疑惑，A 没初始化完成放入了缓存，那么 B 用的岂不是就是未完成的 A，是这样的没错！ 在整个过程当中，A 是只有 1 个，而 B 那里的 A 只是 A 的引用，所以后面 A 完成了初始化，B 中的 A 自然也就完成了。这里就是文中前面提到的手动 setA，setB 那里，我再贴一下代码：**
+​		看完图，可能还会有疑惑，A 没初始化完成放入了缓存，那么 B 用的岂不是就是未完成的 A，是这样的没错！ 在整个过程当中，A 是只有 1 个，而 B 那里的 A 只是 A 的引用，所以后面 A 完成了初始化，B 中的 A 自然也就完成了。这里就是文中前面提到的手动 setA，setB 那里，我再贴一下代码：
 
 ```java
   A a = new A();
@@ -1753,175 +2363,175 @@ new A(b);
   a.setB(b); // 这里设置 a 的属性 b，此时的 b 已经完成了初始化，设置完 a 的属性, a 也就完成了初始化，那么对应的 b 也就完成了初始化
 ```
 
-​		**分析到这里呢，我们就会发现二级缓存就解决了循环依赖的问题了，可是为什么还要三级缓存呢？ 这里就要说说 Spring 中 Bean 的生命周期。**
+​		分析到这里呢，我们就会发现二级缓存就解决了循环依赖的问题了，可是为什么还要三级缓存呢？ 这里就要说说 Spring 中 Bean 的生命周期。
 
-### **7、Spring 中 Bean 的管理**
+### 7、Spring 中 Bean 的管理
 
 **![一文深入分析阿里Java二面神仙问题：Spring循环依赖](https://p6-tt.byteimg.com/origin/pgc-image/e230f053170f4df48c0b4e74ac7b5b34?from=pc)**
 
-**要明白 Spring 中的循环依赖，首先得了解下 Spring 中 Bean 的生命周期。**
+要明白 Spring 中的循环依赖，首先得了解下 Spring 中 Bean 的生命周期。
 
-> **被 Spring 管理的对象叫 Bean 这里不会对 Bean 的生命周期进行详细的描述，只是描述一下大概的过程，方便大家去理解循环依赖。**
+> 被 Spring 管理的对象叫 Bean 这里不会对 Bean 的生命周期进行详细的描述，只是描述一下大概的过程，方便大家去理解循环依赖。
 
-**Spring 中 Bean 的生命周期，指的就是 Bean 从创建到销毁的一系列生命活动。**
+Spring 中 Bean 的生命周期，指的就是 Bean 从创建到销毁的一系列生命活动。
 
-**那么由 Spring 来管理 Bean，要经过的主要步骤有：**
+那么由 Spring 来管理 Bean，要经过的主要步骤有：
 
-> 1. **Spring 根据开发人员的配置，扫描哪些类由 Spring 来管理，并为每个类生成一个 `BeanDefintion`，里面封装了类的一些信息，如全限定类名、哪些属性、是否单例等等**
-> 2. **根据` BeanDefintion `的信息，通过反射，去实例化 Bean（此时就是实例化但未初始化 的 Bean）**
-> 3. **填充上述未初始化对象中的属性（依赖注入）**
-> 4. **如果上述未初始化对象中的方法被 AOP 了，那么就需要生成代理类（也叫包装类）**
-> 5. **最后将完成初始化的对象存入缓存中（此处缓存 Spring 里叫： `singletonObjects`），下次用从缓存获取** 
+> 1. Spring 根据开发人员的配置，扫描哪些类由 Spring 来管理，并为每个类生成一个 `BeanDefintion`，里面封装了类的一些信息，如全限定类名、哪些属性、是否单例等等
+> 2. 根据` BeanDefintion `的信息，通过反射，去实例化 Bean（此时就是实例化但未初始化 的 Bean）
+> 3. 填充上述未初始化对象中的属性（依赖注入）
+> 4. 如果上述未初始化对象中的方法被 AOP 了，那么就需要生成代理类（也叫包装类）
+> 5. 最后将完成初始化的对象存入缓存中（此处缓存 Spring 里叫： `singletonObjects`），下次用从缓存获取 
 
-### **8、二级缓存有什么问题？**
+### 8、二级缓存有什么问题？
 
-​		**如果 Bean 没有 AOP，那么用二级缓存其实没有什么问题的，一旦有上述生命周期中第四步，就会导致的一个问题。因为 AOP 处理后，往往是需要生成代理对象的，代理对象和原来的对象根本就不是 1 个对象。以二级缓存的场景来说，假设 A 类的某个方法会被 AOP，过程就是这样的：**
+​		如果 Bean 没有 AOP，那么用二级缓存其实没有什么问题的，一旦有上述生命周期中第四步，就会导致的一个问题。因为 AOP 处理后，往往是需要生成代理对象的，代理对象和原来的对象根本就不是 1 个对象。以二级缓存的场景来说，假设 A 类的某个方法会被 AOP，过程就是这样的：**
 
 **![一文深入分析阿里Java二面神仙问题：Spring循环依赖](https://p3-tt.byteimg.com/origin/pgc-image/7b81594907d74f40a72208d164a83a0e?from=pc)**
 
-> 1. **生成 a 的实例，然后放入缓存，a 需要 b**
-> 2. **再生成 b ，填充 b 的时候，需要 a，从缓存中取到了 a，完成 b 的初始化；**
-> 3. **紧接着 a 把初始化好的 b 拿过来用，完成 a 的属性填充和初始化**
-> 4. **由于 A 类涉及到了 AOP，再然后 a 要生成一个代理类，这里就叫：代理 a 吧**
+> 1. 生成 a 的实例，然后放入缓存，a 需要 b
+> 2. 再生成 b ，填充 b 的时候，需要 a，从缓存中取到了 a，完成 b 的初始化；
+> 3. 紧接着 a 把初始化好的 b 拿过来用，完成 a 的属性填充和初始化
+> 4. 由于 A 类涉及到了 AOP，再然后 a 要生成一个代理类，这里就叫：代理 a 吧
 
-​		**==结果就是==：a 最终的产物是代理 a，那 b 中其实也应该用代理 a，而现在 b 中用的却是原始的 a， 代理 a 和原始的 a 不是一个对象，现在这就有问题了。**
+​		==结果就是==：a 最终的产物是代理 a，那 b 中其实也应该用代理 a，而现在 b 中用的却是原始的 a， 代理 a 和原始的 a 不是一个对象，现在这就有问题了。
 
-### **9、使用三级缓存如何解决？**
+### 9、使用三级缓存如何解决？
 
-​		**二级缓存还是有问题，那就再加一层缓存，也就是第三级缓存：`Map<String, ObjectFactory<?>> singletonFactories`，在 bean 的生命周期中，创建完对象之后，就会构造一个这个对象对应的` ObjectFactory `存入` singletonFactories` 中。**
+​		二级缓存还是有问题，那就再加一层缓存，也就是第三级缓存：`Map<String, ObjectFactory<?>> singletonFactories`，在 bean 的生命周期中，创建完对象之后，就会构造一个这个对象对应的` ObjectFactory `存入` singletonFactories` 中。
 
-**`singletonFactories` 中存的是某个` beanName` 及对应的 `ObjectFactory`，这个 `ObjectFactory `其实就是生成这个 `Bean` 的工厂。实际中，这个` ObjectFactory `是个 Lambda 表达式：() -> `getEarlyBeanReference(beanName, mbd, bean)`，而且，这个表达式并没有执行。**
+`singletonFactories` 中存的是某个` beanName` 及对应的 `ObjectFactory`，这个 `ObjectFactory `其实就是生成这个 `Bean` 的工厂。实际中，这个` ObjectFactory `是个 Lambda 表达式：() -> `getEarlyBeanReference(beanName, mbd, bean)`，而且，这个表达式并没有执行。
 
-### **10、那么 getEarlyBeanReference 具体做了什么事情？**
+### 10、那么 getEarlyBeanReference 具体做了什么事情？
 
-> **核心就是两步：**
+> 核心就是两步：
 >
-> **第一步：根据` beanName `将它对应的实例化后且未初始化完的 Bean，存入 `Map<Object, Object> earlyProxyReferences = new ConcurrentHashMap<>(16)`;**
+> 第一步：根据` beanName `将它对应的实例化后且未初始化完的 Bean，存入 `Map<Object, Object> earlyProxyReferences = new ConcurrentHashMap<>(16)`;
 >
-> **第二步：生成该 Bean 对应的代理类返回**
+> 第二步：生成该 Bean 对应的代理类返回
 
-​		**这个 `earlyProxyReferences`其实就是用于记录哪些 Bean 执行过 AOP，防止后期再次对 Bean 进行 AOP那么 getEarlyBeanReference 什么时候被触发，什么时候执行？**
+​		这个 `earlyProxyReferences`其实就是用于记录哪些 Bean 执行过 AOP，防止后期再次对 Bean 进行 AOP那么 getEarlyBeanReference 什么时候被触发，什么时候执行？
 
-​		**在二级缓存示例中，填充 B 的属性时候，需要 A，然后去缓存中拿 A，此时==先去第三级缓存中去取 A==，如果存在，此时就执行 getEarlyBeanReference 函数，然后该函数就会返回 A 对应的代理对象。**
+​		在二级缓存示例中，填充 B 的属性时候，需要 A，然后去缓存中拿 A，此时==先去第三级缓存中去取 A==，如果存在，此时就执行 getEarlyBeanReference 函数，然后该函数就会返回 A 对应的代理对象。
 
-​		**后续再将该代理对象放入第二级缓存中，也就是` Map<String, Object> earlySingletonObjects`里。**
+​		后续再将该代理对象放入第二级缓存中，也就是` Map<String, Object> earlySingletonObjects`里。
 
-### **11、为什么不放入第一级缓存呢？**
+### 11、为什么不放入第一级缓存呢？
 
-​		**此时就拿到的代理对象，也是未填充属性的，也就是仍然是未初始化完的对象。==如果直接放入第一级缓存，此时被其他类拿去使用，肯定有问题了==。**
+​		此时就拿到的代理对象，也是未填充属性的，也就是仍然是未初始化完的对象。==如果直接放入第一级缓存，此时被其他类拿去使用，肯定有问题了==。
 
-​		**那么什么时候放入第一级缓存？**
+​		那么什么时候放入第一级缓存？
 
-​		**这里需要再简单说下第二级缓存的作用，假如 A 经过第三级缓存，获得代理对象，这个代理对象仍然是未初始化完的！那么就暂时把这个代理对象放入第二级缓存，然后删除该代理对象原本在第三级缓存中的数据（确保后期不会每次都生成新的代理对象），后面其他类要用了 A，就去第二级缓存中找，就获取到了 A 的代理对象，而且都用的是同一个 A 的代理对象，这样后面只需要对这一个代理对象进行完善，其他引入该代理对象的类就都完善了。**
+​		这里需要再简单说下第二级缓存的作用，假如 A 经过第三级缓存，获得代理对象，这个代理对象仍然是未初始化完的！那么就暂时把这个代理对象放入第二级缓存，然后删除该代理对象原本在第三级缓存中的数据（确保后期不会每次都生成新的代理对象），后面其他类要用了 A，就去第二级缓存中找，就获取到了 A 的代理对象，而且都用的是同一个 A 的代理对象，这样后面只需要对这一个代理对象进行完善，其他引入该代理对象的类就都完善了。
 
-​		**再往后面，继续完成 A 的初始化，那么先判断 A 是否存在于 `earlyProxyReferences` 中， 存在就说明 A 已经经历过 AOP 了，就无须再次 AOP。那 A 的操作就转换从二级缓存中获取，把 A 的代理类拿出来，填充代理类的属性。**
+​		再往后面，继续完成 A 的初始化，那么先判断 A 是否存在于 `earlyProxyReferences` 中， 存在就说明 A 已经经历过 AOP 了，就无须再次 AOP。那 A 的操作就转换从二级缓存中获取，把 A 的代理类拿出来，填充代理类的属性。
 
-​		**完成后再将 A 的代理对象加入到第一级缓存，再把它原本在第二级缓存中的数据删掉，确保后面还用到 A 地类，直接从第一级缓存中获取。**
+​		完成后再将 A 的代理对象加入到第一级缓存，再把它原本在第二级缓存中的数据删掉，确保后面还用到 A 地类，直接从第一级缓存中获取。
 
-**看个图理解下**
+看个图理解下
 
 **![一文深入分析阿里Java二面神仙问题：Spring循环依赖](https://p1-tt.byteimg.com/origin/pgc-image/dfea3da2cfc1496e812534fa16b50d82?from=pc)**
 
-### **12、总之**
+### 12、总之
 
-1. **拿bean的时候先从`singletonObjects`（⼀级缓存，单例池）中获取**
-2. **如果获取不到，并且对象正在创建中，就从`earlySingletonObjects`（⼆级缓存）中获取**
-3. **如果还是获取不到就从`singletonFactories`（三级缓存）中获取，然后将获取到的对象放到`earlySingletonObjects`（⼆级缓存）中，并且将bean对应的`singletonFactories`（三级缓存）清除**
-4. **` bean`初始化完毕，放到`singletonObjects`（⼀级缓存）中，将`bean`对应的`earlySingletonObjects`（⼆级缓存）清除**  
+1. 拿bean的时候先从`singletonObjects`（⼀级缓存，单例池）中获取
+2. 如果获取不到，并且对象正在创建中，就从`earlySingletonObjects`（⼆级缓存）中获取
+3. 如果还是获取不到就从`singletonFactories`（三级缓存）中获取，然后将获取到的对象放到`earlySingletonObjects`（⼆级缓存）中，并且将bean对应的`singletonFactories`（三级缓存）清除
+4. ` bean`初始化完毕，放到`singletonObjects`（⼀级缓存）中，将`bean`对应的`earlySingletonObjects`（⼆级缓存）清除  
 
-## **（三）、@Resource和@Autowired区别**  
+## （三）、@Resource和@Autowired区别  
 
-### **1、⾃动绑定（Autowiring）模式**
+### 1、⾃动绑定（Autowiring）模式
 
-| **模式**        | **说明**                                                     |
-| --------------- | ------------------------------------------------------------ |
-| **no**          | **默认值，未激活`Autowiring`，需要手动执行依赖注入对象**     |
-| **byType**      | **根据被注入属性的类型作为依赖类型进行查找，并将对象设置到该属性** |
-| **byName**      | **根据被注入属性的名称作为Bean名称进行依赖查找，并将对象设置到该属性** |
-| **constructor** | **特殊的byType类型，⽤户构造器参数**                         |
+| 模式        | 说明                                                         |
+| ----------- | ------------------------------------------------------------ |
+| no          | 默认值，未激活`Autowiring`，需要手动执行依赖注入对象         |
+| byType      | 根据被注入属性的类型作为依赖类型进行查找，并将对象设置到该属性 |
+| byName      | 根据被注入属性的名称作为Bean名称进行依赖查找，并将对象设置到该属性 |
+| constructor | 特殊的byType类型，⽤户构造器参数                             |
 
-> 1. **`@Autowired`是`Spring`中的注解， `@Resource`是`JSR-250`中提供的注解，即Java提供的注解，从包名就可以看出来**
->    **Autowired： org.springframework.beans.factory.annotation.Autowired**
->    **Resource： javax.annotation.Resource**
-> 2. **`@Autowired`的依赖注⼊过程是由`AutowiredAnnotationBeanPostProcessor`⽀持的。具体的注⼊逻辑在`DefaultListableBeanFactory#doResolveDependency`**
->    1. **找到所有类型符合的bean**
->    2. **如果没有类型符合的bean，则看`@Autowired`的`required`属性是否为`true`，是则抛出异常，否则返回null**
->    3. **如果只有⼀个，则将这个bean注⼊**
+> 1. `@Autowired`是`Spring`中的注解， `@Resource`是`JSR-250`中提供的注解，即Java提供的注解，从包名就可以看出来
+>    Autowired： org.springframework.beans.factory.annotation.Autowired
+>    Resource： javax.annotation.Resource
+> 2. `@Autowired`的依赖注⼊过程是由`AutowiredAnnotationBeanPostProcessor`⽀持的。具体的注⼊逻辑在`DefaultListableBeanFactory#doResolveDependency`
+>    1. 找到所有类型符合的bean
+>    2. 如果没有类型符合的bean，则看`@Autowired`的`required`属性是否为`true`，是则抛出异常，否则返回null
+>    3. 如果只有⼀个，则将这个bean注⼊
 >    4. 
->    5. **如果有多个bean**
->       **4.1 选择其中带有`Primary`注解的bean，如果只有⼀个直接注⼊，如果有多个bean带有Primary注解则报错，如果不存在就下⼀步；**
->       **4.2 选择其中优先级最⾼的bean(优先级使⽤`javax.annotation.Priority`表明)，如果只有⼀个直接注⼊，如果有多个bean的优先级并列最⾼则报错，如果不存在就下⼀步**
->       **4.3 选择`beanName`和当前要注⼊的属性名相同的bean进⾏注⼊，多个或者没有报错，单个则注⼊**
+>    5. 如果有多个bean
+>       4.1 选择其中带有`Primary`注解的bean，如果只有⼀个直接注⼊，如果有多个bean带有Primary注解则报错，如果不存在就下⼀步；
+>       4.2 选择其中优先级最⾼的bean(优先级使⽤`javax.annotation.Priority`表明)，如果只有⼀个直接注⼊，如果有多个bean的优先级并列最⾼则报错，如果不存在就下⼀步
+>       4.3 选择`beanName`和当前要注⼊的属性名相同的bean进⾏注⼊，多个或者没有报错，单个则注⼊
 
-> **1、`@Resource`的依赖注⼊过程是由`CommonAnnotationBeanPostProcessor`⽀持的具体的注⼊逻辑在`CommonAnnotationBeanPostProcessor#autowireResource`**
-> **2、@Resource的注⼊逻辑如下**
+> 1、`@Resource`的依赖注⼊过程是由`CommonAnnotationBeanPostProcessor`⽀持的具体的注⼊逻辑在`CommonAnnotationBeanPostProcessor#autowireResource`
+> 2、@Resource的注⼊逻辑如下
 >
-> 1. **如果`@Resource`指定了`name`，则只会按照`name`进⾏查找，当找不到时抛出异常，找到将bean注⼊**
-> 2.  **如果`@Resource`没有指定name，则把属性名作为名字进⾏查找，找到将bean注⼊，当按照名字查找不到时，按照类型进⾏查找，单个注入，多个或者没有报错。**
+> 1. 如果`@Resource`指定了`name`，则只会按照`name`进⾏查找，当找不到时抛出异常，找到将bean注⼊
+> 2.  如果`@Resource`没有指定name，则把属性名作为名字进⾏查找，找到将bean注⼊，当按照名字查找不到时，按照类型进⾏查找，单个注入，多个或者没有报错。
 
-**注意：** 
+注意： 
 
-1. **`@Resource`按照类型查找的逻辑和`@Autowired`的⼀样，因为都是调⽤了`DefaultListableBeanFactory#doResolveDependency`⽅法**
-2. **@Autowired：==先byType再byName==**
-   **@Resource：==先byName再byType（当指定@Resource name属性时，只会byName）==**
+1. `@Resource`按照类型查找的逻辑和`@Autowired`的⼀样，因为都是调⽤了`DefaultListableBeanFactory#doResolveDependency`⽅法
+2. @Autowired：==先byType再byName==
+   @Resource：==先byName再byType（当指定@Resource name属性时，只会byName）==
 
-# **五、JUC**
+# 五、JUC
 
-## **（一）、进程、线程、协程、管程**
+## （一）、进程、线程、协程、管程
 
-**`进程`：进程是一个具有一定独立功能的程序在一个数据集上的一次动态执行的过程，是操作系统进行资源分配和调度的一个独立单位**
+`进程`：进程是一个具有一定独立功能的程序在一个数据集上的一次动态执行的过程，是操作系统进行资源分配和调度的一个独立单位
 
-**`线程`：线程是程序执行中一个单一的顺序控制流程，是程序执行流的最小单元，是处理器调度和分派的基本单位**
+`线程`：线程是程序执行中一个单一的顺序控制流程，是程序执行流的最小单元，是处理器调度和分派的基本单位
 
-## **（二）、并行与并发**
+## （二）、并行与并发
 
-**`并行`：多个CPU执行多个任务**
+`并行`：多个CPU执行多个任务
 
-**`并发`：一个CPU执行多个任务**
+`并发`：一个CPU执行多个任务
 
-## **（三）、线程的状态**
+## （三）、线程的状态
 
-1. **新建(NEW)：新创建了一个线程对象。**
+1. 新建(NEW)：新创建了一个线程对象。
 
-2. **可运行(RUNNABLE)：线程对象创建后，其他线程(比如main线程）调用了该对象的start()方法。该状态的线程位于可运行线程池中，等待被线程调度选中，获取cpu 的使用权 。**
+2. 可运行(RUNNABLE)：线程对象创建后，其他线程(比如main线程）调用了该对象的start()方法。该状态的线程位于可运行线程池中，等待被线程调度选中，获取cpu 的使用权 。
 
-3. **运行(RUNNING)：可运行状态(runnable)的线程获得了cpu 时间片（timeslice） ，执行程序代码。**
-4. **阻塞(BLOCKED)：阻塞状态是指线程因为某种原因放弃了cpu 使用权，也即让出了cpu timeslice，暂时停止运行。直到线程进入可运行(runnable)状态，才有机会再次获得cpu timeslice 转到运行(running)状态。阻塞的情况分三种：** 
+3. 运行(RUNNING)：可运行状态(runnable)的线程获得了cpu 时间片（timeslice） ，执行程序代码。
+4. 阻塞(BLOCKED)：阻塞状态是指线程因为某种原因放弃了cpu 使用权，也即让出了cpu timeslice，暂时停止运行。直到线程进入可运行(runnable)状态，才有机会再次获得cpu timeslice 转到运行(running)状态。阻塞的情况分三种： 
 
-> **(一). 等待阻塞：运行(running)的线程执行o.wait()方法，JVM会把该线程放入等待队列(waitting queue)中。**
-> **(二). 同步阻塞：运行(running)的线程在获取对象的同步锁时，若该同步锁被别的线程占用，则JVM会把该线程放入锁池(lock pool)中。**
-> **(三). 其他阻塞：运行(running)的线程执行Thread.sleep(long ms)或t.join()方法，或者发出了I/O请求时，JVM会把该线程置为阻塞状态。当sleep()状态超时、join()等待线程终止或者超时、或者I/O处理完毕时，线程重新转入可运行(runnable)状态。**
+> (一). 等待阻塞：运行(running)的线程执行o.wait()方法，JVM会把该线程放入等待队列(waitting queue)中。
+> (二). 同步阻塞：运行(running)的线程在获取对象的同步锁时，若该同步锁被别的线程占用，则JVM会把该线程放入锁池(lock pool)中。
+> (三). 其他阻塞：运行(running)的线程执行Thread.sleep(long ms)或t.join()方法，或者发出了I/O请求时，JVM会把该线程置为阻塞状态。当sleep()状态超时、join()等待线程终止或者超时、或者I/O处理完毕时，线程重新转入可运行(runnable)状态。
 
-5. **死亡(DEAD)：线程run()、main() 方法执行结束，或者因异常退出了run()方法，则该线程结束生命周期。死亡的线程不可再次复生。**
+5. 死亡(DEAD)：线程run()、main() 方法执行结束，或者因异常退出了run()方法，则该线程结束生命周期。死亡的线程不可再次复生。
 
 **![image-20210506160130019](一、JAVA基础.assets/image-20210506160130019.png)**
 
-## **（四）、线程的调度方法**
+## （四）、线程的调度方法
 
-1. **Thread.sleep(long millis)，一定是当前线程调用此方法，当前线程进入阻塞，但不释放对象锁，millis后线程自动苏醒进入可运行状态。作用：给其它线程执行机会的最佳方式。**
-2. **Thread.yield()，一定是当前线程调用此方法，当前线程放弃获取的cpu时间片，由运行状态变会可运行状态，让OS再次选择线程。作用：让相同优先级的线程轮流执行，但并不保证一定会轮流执行。实际中无法保证yield()达到让步目的，因为让步的线程还有可能被线程调度程序再次选中。Thread.yield()不会导致阻塞。**
-3. **t.join()/t.join(long millis)，当前线程里调用其它线程1的join方法，当前线程阻塞，但不释放对象锁，直到线程1执行完毕或者millis时间到，当前线程进入可运行状态。**
-4. **obj.wait()，当前线程调用对象的wait()方法，当前线程释放对象锁，进入等待队列。依靠notify()/notifyAll()唤醒或者wait(long timeout)timeout时间到自动唤醒。**
+1. Thread.sleep(long millis)，一定是当前线程调用此方法，当前线程进入阻塞，但不释放对象锁，millis后线程自动苏醒进入可运行状态。作用：给其它线程执行机会的最佳方式。
+2. Thread.yield()，一定是当前线程调用此方法，当前线程放弃获取的cpu时间片，由运行状态变会可运行状态，让OS再次选择线程。作用：让相同优先级的线程轮流执行，但并不保证一定会轮流执行。实际中无法保证yield()达到让步目的，因为让步的线程还有可能被线程调度程序再次选中。Thread.yield()不会导致阻塞。
+3. t.join()/t.join(long millis)，当前线程里调用其它线程1的join方法，当前线程阻塞，但不释放对象锁，直到线程1执行完毕或者millis时间到，当前线程进入可运行状态。
+4. obj.wait()，当前线程调用对象的wait()方法，当前线程释放对象锁，进入等待队列。依靠notify()/notifyAll()唤醒或者wait(long timeout)timeout时间到自动唤醒。
 
-> **注意：**
+> 注意：
 >
-> **notify()：唤醒一个位于等待队列的线程，是公平竞争，由JVM决定**
+> notify()：唤醒一个位于等待队列的线程，是公平竞争，由JVM决定
 >
-> **notifyAll()：唤醒位于等待队列的所有线程，同一时间只有一个线程获得锁，非公平竞争**
+> notifyAll()：唤醒位于等待队列的所有线程，同一时间只有一个线程获得锁，非公平竞争
 
-1. **obj.notify()唤醒在此对象监视器上等待的单个线程，选择是任意性的。notifyAll()唤醒在此对象监视器上等待的所有线程。**
+1. obj.notify()唤醒在此对象监视器上等待的单个线程，选择是任意性的。notifyAll()唤醒在此对象监视器上等待的所有线程。
 
-## **（五）、锁池状态**
+## （五）、锁池状态
 
-1. **当前线程想调用对象A的同步方法时，发现对象A的锁被别的线程占有，此时当前线程进入锁池状态。简言之，锁池里面放的都是想争夺对象锁的线程。**
-2. **当一个线程1被另外一个线程2唤醒时，1线程进入锁池状态，去争夺对象锁。**
-3. **锁池是在同步的环境下才有的概念，一个对象对应一个锁池。**
+1. 当前线程想调用对象A的同步方法时，发现对象A的锁被别的线程占有，此时当前线程进入锁池状态。简言之，锁池里面放的都是想争夺对象锁的线程。
+2. 当一个线程1被另外一个线程2唤醒时，1线程进入锁池状态，去争夺对象锁。
+3. 锁池是在同步的环境下才有的概念，一个对象对应一个锁池。
 
-## **（六）、sleep与wait的区别**
+## （六）、sleep与wait的区别
 
-1. **sleep是Thread类的方法，wait是Object的方法。**
-2. **sleep可以在任何地方使用，wait只能在Synchronized方法和代码块中使用。**
-3. **sleep只会让出CPU，而不会释放锁，wait不仅会让出CPU，还会释放锁，只有针对此对象调用notify或者时间到了，才会执行。**
+1. sleep是Thread类的方法，wait是Object的方法。
+2. sleep可以在任何地方使用，wait只能在Synchronized方法和代码块中使用。
+3. sleep只会让出CPU，而不会释放锁，wait不仅会让出CPU，还会释放锁，只有针对此对象调用notify或者时间到了，才会执行。
 
 ```java
 public class Test {
@@ -1965,7 +2575,7 @@ public class Test {
 */
 ```
 
-## **（七）、ThreadLocal**
+## （七）、ThreadLocal
 
 ```java
 public class Test {
@@ -1993,7 +2603,7 @@ class DataUtil {
 }
 ```
 
-## **（八）、控制线程的执行顺序**
+## （八）、控制线程的执行顺序
 
 ```JAVA
 public class Test {
@@ -2019,7 +2629,7 @@ public class Test {
 
 ```
 
-## **（九）、CountDownLatch**
+## （九）、CountDownLatch
 
 ```java
 public class Test {
@@ -2059,11 +2669,11 @@ Thread-1 任务花费了 9 秒。
 */
 ```
 
-## **（十）、CyclicBarrier**
+## （十）、CyclicBarrier
 
-> **CyclicBarrier默认的构造方法是CyclicBarrier(int parties)，其参数表示屏障拦截的线程数量，每个线程使用await()方法告诉CyclicBarrier我已经到达了屏障，然后当前线程被阻塞。**
+> CyclicBarrier默认的构造方法是CyclicBarrier(int parties)，其参数表示屏障拦截的线程数量，每个线程使用await()方法告诉CyclicBarrier我已经到达了屏障，然后当前线程被阻塞。
 >
-> **CyclicBarrier的另一个构造函数CyclicBarrier(int parties, Runnable barrierAction)，用于线程到达屏障时，==优先执行barrierAction==，方便处理更复杂的业务场景。**
+> CyclicBarrier的另一个构造函数CyclicBarrier(int parties, Runnable barrierAction)，用于线程到达屏障时，==优先执行barrierAction==，方便处理更复杂的业务场景。
 
 ```java
 public class Test {
@@ -2100,15 +2710,15 @@ Thread-4 任务花费了 1 秒。
 */
 ```
 
-> **CyclicBarrier和CountDownLatch的区别：**
+> CyclicBarrier和CountDownLatch的区别：
 >
-> **CountDownLatch的计数器只能使用一次，而CyclicBarrier的计数器可以使用reset()方法重置，可以使用多次，所以CyclicBarrier能够处理更为复杂的场景；**
+> CountDownLatch的计数器只能使用一次，而CyclicBarrier的计数器可以使用reset()方法重置，可以使用多次，所以CyclicBarrier能够处理更为复杂的场景；
 >
-> **CyclicBarrier还提供了一些其他有用的方法，比如getNumberWaiting()方法可以获得CyclicBarrier阻塞的线程数量，isBroken()方法用来了解阻塞的线程是否被中断；**
+> CyclicBarrier还提供了一些其他有用的方法，比如getNumberWaiting()方法可以获得CyclicBarrier阻塞的线程数量，isBroken()方法用来了解阻塞的线程是否被中断；
 >
-> **CountDownLatch允许一个或多个线程等待一组事件的产生，而CyclicBarrier用于等待其他线程运行到栅栏位置。**
+> CountDownLatch允许一个或多个线程等待一组事件的产生，而CyclicBarrier用于等待其他线程运行到栅栏位置。
 
-## **（十一）、CompletableFuture(多任务组合)**
+## （十一）、CompletableFuture(多任务组合)
 
 ```java
 public class Test {
@@ -2141,62 +2751,62 @@ public class Test {
 }
 ```
 
-## **（十二）、Semaphore**
+## （十二）、Semaphore
 
-## **（十三）、接口幂等性**
+## （十三）、接口幂等性
 
-**幂等性就是同⼀个操作执⾏多次，产⽣的效果⼀样 。**
+幂等性就是同⼀个操作执⾏多次，产⽣的效果⼀样 。
 
-> **==前端==：**
+> ==前端==：
 >
-> 1. **==按钮只能点击一次==，按钮置灰，或者显示loading状态 。**
-> 2. **==RPG（Post-Redirect-Get）模式== ，当客户提交表单后，去执⾏⼀个客户端的重定向，转到提交成功⻚⾯。避免⽤户按F5刷新导致的重复提交，也能消除按浏览器后退键导致的重复提交问题。⽬前绝⼤多数公司都是这样做的，⽐如淘宝，京东等**  
+> 1. ==按钮只能点击一次==，按钮置灰，或者显示loading状态 。
+> 2. ==RPG（Post-Redirect-Get）模式== ，当客户提交表单后，去执⾏⼀个客户端的重定向，转到提交成功⻚⾯。避免⽤户按F5刷新导致的重复提交，也能消除按浏览器后退键导致的重复提交问题。⽬前绝⼤多数公司都是这样做的，⽐如淘宝，京东等  
 >
-> **==后端==：**
+> ==后端==：
 >
-> 1. **==使⽤唯⼀索引==：对业务唯⼀的字段加上唯⼀索引，这样当数据重复时，插⼊数据库会抛异常**
-> 2. **==状态机幂等==：  如果业务上需要修改订单状态，例如订单状态有待⽀付，⽀付中，⽀付成功，⽀付失败。设计时最好只⽀持状态的单向改变。这样在更新的时候就可以加上条件，多次调⽤也只会执⾏⼀次。例如想把订单状态更新为⽀持成功，则之前的状态必须为⽀付中 。**
-> 3. **==乐观锁实现幂等== ：查询数据获得版本号， 通过版本号去更新，版本号匹配则更新，版本号不匹配则不更新 。**
-> 4. **==防重表==：增加⼀个防重表，业务唯⼀的id作为唯⼀索引，如订单号，当想针对订单做⼀系列操作时，可以向防重表中插⼊⼀条记录，插⼊成功，执⾏后续操作，插⼊失败，则不执⾏后续操作。本质上可以看成是基于MySQL实现的分布式锁。根据业务场景决定执⾏成功后，是否删除防重表中对应的数据。**
-> 5. **==分布式锁实现幂等==：执⾏⽅法时，先根据业务==唯⼀的id获取分布式锁==，获取成功，则执⾏，失败则不执⾏。分布式锁可以基**
->    **于redis， zookeeper， mysql来实现 。**
-> 6. **==select+insert==：先查询⼀下有没有符合要求的数据，如果没有再执⾏插⼊。==没有并发的系统中可以保证幂等性，⾼并发
->    下不要⽤这种⽅法，也会造成数据的重复插⼊==。 我⼀般做消息幂等的时候就是先select，有数据直接返回，==没有数据加分布式锁进⾏insert操==。**
-> 7. **==全局唯⼀号实现幂等==：通过source（来源）+ seq（序列号）来判断请求是否重复，重复则直接返回‘’请求重复提交‘’，否则执⾏。如当多个三⽅系统调⽤服务的时候，就可以采⽤这种⽅式 。**
+> 1. ==使⽤唯⼀索引==：对业务唯⼀的字段加上唯⼀索引，这样当数据重复时，插⼊数据库会抛异常
+> 2. ==状态机幂等==：  如果业务上需要修改订单状态，例如订单状态有待⽀付，⽀付中，⽀付成功，⽀付失败。设计时最好只⽀持状态的单向改变。这样在更新的时候就可以加上条件，多次调⽤也只会执⾏⼀次。例如想把订单状态更新为⽀持成功，则之前的状态必须为⽀付中 。
+> 3. ==乐观锁实现幂等== ：查询数据获得版本号， 通过版本号去更新，版本号匹配则更新，版本号不匹配则不更新 。
+> 4. ==防重表==：增加⼀个防重表，业务唯⼀的id作为唯⼀索引，如订单号，当想针对订单做⼀系列操作时，可以向防重表中插⼊⼀条记录，插⼊成功，执⾏后续操作，插⼊失败，则不执⾏后续操作。本质上可以看成是基于MySQL实现的分布式锁。根据业务场景决定执⾏成功后，是否删除防重表中对应的数据。
+> 5. ==分布式锁实现幂等==：执⾏⽅法时，先根据业务==唯⼀的id获取分布式锁==，获取成功，则执⾏，失败则不执⾏。分布式锁可以基
+>    于redis， zookeeper， mysql来实现 。
+> 6. ==select+insert==：先查询⼀下有没有符合要求的数据，如果没有再执⾏插⼊。==没有并发的系统中可以保证幂等性，⾼并发
+>    下不要⽤这种⽅法，也会造成数据的重复插⼊==。 我⼀般做消息幂等的时候就是先select，有数据直接返回，==没有数据加分布式锁进⾏insert操==。
+> 7. ==全局唯⼀号实现幂等==：通过source（来源）+ seq（序列号）来判断请求是否重复，重复则直接返回‘’请求重复提交‘’，否则执⾏。如当多个三⽅系统调⽤服务的时候，就可以采⽤这种⽅式 。
 
-## **（十四）、线程池**
+## **（十四）、**线程池****
 
-### **1、七大参数**
+### 1、七大参数
 
-| **参数**                     | **含义**                                               |
-| ---------------------------- | ------------------------------------------------------ |
-| **corePoolSize**             | **核⼼线程池⼤⼩，==始终存活的线程数量==**             |
-| **maximumPoolSize**          | **线程池最⼤容量⼤⼩，最大能拥有的线程数量**           |
-| **keepAliveTime**            | **线程池空闲时，线程存活的时间，非核心线程存活的时间** |
-| **TimeUnit**                 | **线程活动保持时间的单位，非核心线程存活的时间单位**   |
-| **BlockingQueue<Runnable>**  | **任务队列，⽤于保存等待执⾏的任务的阻塞队列**         |
-| **ThreadFactory**            | **⽤于设置线程的⼯⼚**                                 |
-| **RejectedExecutionHandler** | **饱和策略**                                           |
+| 参数                     | 含义                                               |
+| ------------------------ | -------------------------------------------------- |
+| corePoolSize             | 核⼼线程池⼤⼩，==始终存活的线程数量==             |
+| maximumPoolSize          | 线程池最⼤容量⼤⼩，最大能拥有的线程数量           |
+| keepAliveTime            | 线程池空闲时，线程存活的时间，非核心线程存活的时间 |
+| TimeUnit                 | 线程活动保持时间的单位，非核心线程存活的时间单位   |
+| BlockingQueue<Runnable>  | 任务队列，⽤于保存等待执⾏的任务的阻塞队列         |
+| ThreadFactory            | ⽤于设置线程的⼯⼚                                 |
+| RejectedExecutionHandler | 饱和策略                                           |
 
-### **2、饱和策略**
+### 2、饱和策略
 
-| **类**                  | **策略**                                     |
-| ----------------------- | -------------------------------------------- |
-| **AbortPolicy**         | **丢弃任务，抛运⾏时异常（默认的处理策略）** |
-| **CallerRunsPolicy**    | **执⾏任务，==谁提交谁执行==**               |
-| **DiscardPolicy**       | **忽视，什么都不会发⽣**                     |
-| **DiscardOldestPolicy** | **丢弃队列⾥最近的⼀个任务，并执⾏当前任务** |
+| 类                  | 策略                                     |
+| ------------------- | ---------------------------------------- |
+| AbortPolicy         | 丢弃任务，抛运⾏时异常（默认的处理策略） |
+| CallerRunsPolicy    | 执⾏任务，==谁提交谁执行==               |
+| DiscardPolicy       | 忽视，什么都不会发⽣                     |
+| DiscardOldestPolicy | 丢弃队列⾥最近的⼀个任务，并执⾏当前任务 |
 
-### **3、BlockingQueue**
+### 3、BlockingQueue
 
-**常用的workQueue类型：**
+常用的workQueue类型：
 
-1. **SynchronousQueue：这个队列接收到任务的时候，会==直接提交给线程处理，而不保留它==，如果所有线程都在工作怎么办？那就新建一个线程来处理这个任务！所以为了保证不出现<`线程数达到了maximumPoolSize而不能新建线程`>的错误，使用这个类型队列的时候，maximumPoolSize一般指定成Integer.MAX_VALUE，即无限大。**
-2. **LinkedBlockingQueue：这个队列接收到任务的时候，如果当前线程数小于核心线程数，则新建线程(核心线程)处理任务；如果==当前线程数等于核心线程数，则进入队列等待==。由于这个队列没有最大值限制，即所有超过核心线程数的任务都将被添加到队列中，这也就`导致了maximumPoolSize的设定失效`，因为总线程数永远不会超过corePoolSize。**
-3. **ArrayBlockingQueue：可以限定队列的长度，接收到任务的时候，如果没有达到corePoolSize的值，则新建线程(核心线程)执行任务，如果达到了，则入队等候，如果队列已满，则新建线程(非核心线程)执行任务，又如果总线程数到了`maximumPoolSize`，并且队列也满了，则发生错误。**
-4. **DelayQueue：队列内元素必须实现Delayed接口，这就意味着你传进去的任务必须先实现Delayed接口。这个队列接收到任务时，`首先先入队，只有达到了指定的延时时间，才会执行任务`。**
+1. SynchronousQueue：这个队列接收到任务的时候，会==直接提交给线程处理，而不保留它==，如果所有线程都在工作怎么办？那就新建一个线程来处理这个任务！所以为了保证不出现<`线程数达到了maximumPoolSize而不能新建线程`>的错误，使用这个类型队列的时候，maximumPoolSize一般指定成Integer.MAX_VALUE，即无限大。
+2. LinkedBlockingQueue：这个队列接收到任务的时候，如果当前线程数小于核心线程数，则新建线程(核心线程)处理任务；如果==当前线程数等于核心线程数，则进入队列等待==。由于这个队列没有最大值限制，即所有超过核心线程数的任务都将被添加到队列中，这也就`导致了maximumPoolSize的设定失效`，因为总线程数永远不会超过corePoolSize。
+3. ArrayBlockingQueue：可以限定队列的长度，接收到任务的时候，如果没有达到corePoolSize的值，则新建线程(核心线程)执行任务，如果达到了，则入队等候，如果队列已满，则新建线程(非核心线程)执行任务，又如果总线程数到了`maximumPoolSize`，并且队列也满了，则发生错误。
+4. DelayQueue：队列内元素必须实现Delayed接口，这就意味着你传进去的任务必须先实现Delayed接口。这个队列接收到任务时，`首先先入队，只有达到了指定的延时时间，才会执行任务`。
 
-### **4、线程池的构造函数**
+### 4、线程池的构造函数
 
 ```java
 //五个参数的构造函数
@@ -2216,23 +2826,23 @@ public ThreadPoolExecutor(int corePoolSize,int maximumPoolSize,long keepAliveTim
                           RejectedExecutionHandler handler)
 ```
 
-### **5、常见四种线程池**
+### 5、常见四种线程池
 
-​		**Java通过`Executors`提供了四种线程池，这四种线程池都是直接或间接配置`ThreadPoolExecutor`的参数实现。**
+​		Java通过`Executors`提供了四种线程池，这四种线程池都是直接或间接配置`ThreadPoolExecutor`的参数实现。
 
-**CachedThreadPool()：可缓存线程池。**
+CachedThreadPool()：可缓存线程池。
 
-1. **线程数无限制**
-2. **有空闲线程则复用空闲线程，若无空闲线程则新建线程**
-3. **一定程序减少频繁创建/销毁线程，减少系统开销**
+1. 线程数无限制
+2. 有空闲线程则复用空闲线程，若无空闲线程则新建线程
+3. 一定程序减少频繁创建/销毁线程，减少系统开销
 
-**创建方法：**
+创建方法：
 
 ```
 ExecutorService cachedThreadPool = Executors.newCachedThreadPool();
 ```
 
-**源码：**
+源码：
 
 ```cpp
 public static ExecutorService newCachedThreadPool() {
@@ -2241,12 +2851,12 @@ public static ExecutorService newCachedThreadPool() {
 }
 ```
 
-**FixedThreadPool()：定长线程池。**
+FixedThreadPool()：定长线程池。
 
-1. **可控制线程最大并发数（同时执行的线程数）**
-2. **超出的线程会在队列中等待**
+1. 可控制线程最大并发数（同时执行的线程数）
+2. 超出的线程会在队列中等待
 
-**创建方法：**
+创建方法：
 
 ```cpp
 //nThreads => 最大线程数即maximumPoolSize
@@ -2256,7 +2866,7 @@ ExecutorService fixedThreadPool = Executors.newFixedThreadPool(int nThreads);
 ExecutorService fixedThreadPool = Executors.newFixedThreadPool(int nThreads, ThreadFactory threadFactory);
 ```
 
-**源码：**
+源码：
 
 ```cpp
 public static ExecutorService newFixedThreadPool(int nThreads) {
@@ -2265,16 +2875,16 @@ public static ExecutorService newFixedThreadPool(int nThreads) {
 }
 ```
 
-**ScheduledThreadPool()：定长线程池，支持定时及周期性任务执行。**
+ScheduledThreadPool()：定长线程池，支持定时及周期性任务执行。
 
-**创建方法：**
+创建方法：
 
 ```cpp
 //nThreads => 最大线程数即maximumPoolSize
 ExecutorService scheduledThreadPool = Executors.newScheduledThreadPool(int corePoolSize);
 ```
 
-**源码：**
+源码：
 
 ```java
 public static ScheduledExecutorService newScheduledThreadPool(int corePoolSize) {
@@ -2289,18 +2899,18 @@ public ScheduledThreadPoolExecutor(int corePoolSize) {
 }
 ```
 
-**SingleThreadExecutor()：单线程化的线程池。**
+SingleThreadExecutor()：单线程化的线程池。
 
-1. **有且仅有一个工作线程执行任务**
-2. **所有任务按照指定顺序执行，即遵循队列的入队出队规则**
+1. 有且仅有一个工作线程执行任务
+2. 所有任务按照指定顺序执行，即遵循队列的入队出队规则
 
-**创建方法：**
+创建方法：
 
 ```
 ExecutorService singleThreadPool = Executors.newSingleThreadPool();
 ```
 
-**源码：**
+源码：
 
 ```cpp
 public static ExecutorService newSingleThreadExecutor() {
@@ -2309,22 +2919,22 @@ public static ExecutorService newSingleThreadExecutor() {
 }
 ```
 
-**还有一个`Executors.newSingleThreadScheduledExecutor()`结合了3和4，就不介绍了，基本不用。**
+还有一个`Executors.newSingleThreadScheduledExecutor()`结合了3和4，就不介绍了，基本不用。
 
-### **6、线程池的工作流程**
+### 6、线程池的工作流程
 
-1. **线程池刚创建时，⾥⾯没有⼀个线程。任务队列是作为参数传进来的。不过，就算队列⾥⾯有任务，线程池也不会⻢上执⾏他们。**
-2. **当调⽤`execute()`⽅法添加⼀个任务时，线程池会做如下判断：**
-   **a. 如果正在运⾏的线程数量`⼩于`corePoolSize，那么⻢上创建线程运⾏这个任务；**
-   **b. 如果正在运⾏的线程数量`⼤于或等于`corePoolSize，那么将这个任务放⼊队列；**
-   **c. 如果这时候队列满了，⽽且正在运⾏的线程数量`⼩于`maximunPoolSize，那么还是要创建⾮核⼼线程⽴刻运⾏这个任务；**
-   **d. 如果队列满了，⽽且正在运⾏的线程数量`⼤于或等于`maximunPoolSize，那么线程池会抛出`RejectedExecutionException`。**
-3. **当⼀个线程完成任务时，它会从队列中取下⼀个任务来执⾏，当⼀个线程⽆事可做，超过⼀定的时间（keepAliveTime）时，线程池会判断，如果当前运⾏的线程数⼤于corePoolSize，那么这个线程就被停掉。所以线程池的所有任务完成后，它最终会收缩到**
-   **corePoolSize的⼤⼩ 。**
+1. 线程池刚创建时，⾥⾯没有⼀个线程。任务队列是作为参数传进来的。不过，就算队列⾥⾯有任务，线程池也不会⻢上执⾏他们。
+2. 当调⽤`execute()`⽅法添加⼀个任务时，线程池会做如下判断：
+   a. 如果正在运⾏的线程数量`⼩于`corePoolSize，那么⻢上创建线程运⾏这个任务；
+   b. 如果正在运⾏的线程数量`⼤于或等于`corePoolSize，那么将这个任务放⼊队列；
+   c. 如果这时候队列满了，⽽且正在运⾏的线程数量`⼩于`maximunPoolSize，那么还是要创建⾮核⼼线程⽴刻运⾏这个任务；
+   d. 如果队列满了，⽽且正在运⾏的线程数量`⼤于或等于`maximunPoolSize，那么线程池会抛出`RejectedExecutionException`。
+3. 当⼀个线程完成任务时，它会从队列中取下⼀个任务来执⾏，当⼀个线程⽆事可做，超过⼀定的时间（keepAliveTime）时，线程池会判断，如果当前运⾏的线程数⼤于corePoolSize，那么这个线程就被停掉。所以线程池的所有任务完成后，它最终会收缩到
+   corePoolSize的⼤⼩ 。**
 
 **![image-20210512112104806](一、JAVA基础.assets/image-20210512112104806.png)**
 
-### **7、简易手写版线程池**
+### 7、简易手写版线程池
 
 ```java
 public class MyThreadPool {
@@ -2387,11 +2997,11 @@ public class MyThreadPool {
 }
 ```
 
-## **（十五）、线程的停止**
+## （十五）、线程的停止
 
-​		**实际项目中，有时候需要中断另外一个线程，早期可以使用`stop()`方法，但由于stop强制停止的特性（立刻释放所有monitors），可能会导致一系列难以处理的问题，故最新java版本stop方法已不可用，这里简单介绍下关于其替代方法interrupt()的使用。**
+​		实际项目中，有时候需要中断另外一个线程，早期可以使用`stop()`方法，但由于stop强制停止的特性（立刻释放所有monitors），可能会导致一系列难以处理的问题，故最新java版本stop方法已不可用，这里简单介绍下关于其替代方法interrupt()的使用。
 
-​		**interrupt()其本身并不是一个强制打断线程的方法，其仅仅会修改线程的interrupt标志位，然后让线程自行去读标志位，自行判断是否需要中断。以下代码并不会让线程t1停止。**
+​		interrupt()其本身并不是一个强制打断线程的方法，其仅仅会修改线程的interrupt标志位，然后让线程自行去读标志位，自行判断是否需要中断。以下代码并不会让线程t1停止。**
 
 ```java
 public class Test {
@@ -2440,7 +3050,7 @@ public class Test {
 }
 ```
 
-​		**在设计里，如果线程处于休眠状态，那一旦其被调用`interrupt()`方法，则就没有必要继续休眠下去了，直接抛出异常`InterruptedException`，让被打断线程去做收尾操作，及时释放线程资源。**
+​		在设计里，如果线程处于休眠状态，那一旦其被调用`interrupt()`方法，则就没有必要继续休眠下去了，直接抛出异常`InterruptedException`，让被打断线程去做收尾操作，及时释放线程资源。
 
 ```java
 public class Test {
@@ -2483,7 +3093,7 @@ public class Test {
 }
 ```
 
-**以上两段代码执行结果：**
+以上两段代码执行结果：
 
 ```shell
 休眠开始
@@ -2496,20 +3106,20 @@ java.lang.InterruptedException: sleep interrupted
 休眠结束，休眠时间：1001
 ```
 
-​		**总结：interrupt()是一个“很软”的操作，也就是提醒线程应该结束了，至于如何结束，什么时候结束，以及是否需要结束，都是由线程自行处理。所以，interrupt()的使用，会让开发做更多的事，但这是有必要的，因为只有线程自己，才知道如何合适的结束自己。**
+​		总结：interrupt()是一个“很软”的操作，也就是提醒线程应该结束了，至于如何结束，什么时候结束，以及是否需要结束，都是由线程自行处理。所以，interrupt()的使用，会让开发做更多的事，但这是有必要的，因为只有线程自己，才知道如何合适的结束自己。
 
-## **（十六）、线程的创建方式**
+## （十六）、线程的创建方式
 
-**Runnable或Thread的区别：**
+Runnable或Thread的区别：
 
-> - **Runnable的实现方式是实现其`接口`即可**
-> - **Thread的实现方式是`继承`其类**
-> - **Runnable接口支持多继承，但基本上用不到**
-> - **Thread实现了Runnable接口并进行了扩展，而Thread和Runnable的实质是实现的关系，不是同类东西，所以Runnable或Thread本身没有可比性。**
+> - Runnable的实现方式是实现其`接口`即可
+> - Thread的实现方式是`继承`其类
+> - Runnable接口支持多继承，但基本上用不到
+> - Thread实现了Runnable接口并进行了扩展，而Thread和Runnable的实质是实现的关系，不是同类东西，所以Runnable或Thread本身没有可比性。
 
-​		**结论，Thread和Runnable的实质是继承关系，没有可比性。无论使用Runnable还是Thread，都会new Thread，然后执行run方法。用法上，如果有复杂的线程操作需求，那就选择继承Thread，如果只是简单的执行一个任务，那就实现runnable。**
+​		结论，Thread和Runnable的实质是继承关系，没有可比性。无论使用Runnable还是Thread，都会new Thread，然后执行run方法。用法上，如果有复杂的线程操作需求，那就选择继承Thread，如果只是简单的执行一个任务，那就实现runnable。
 
-**==实现callable 接口==：可以获取线程执行结果**
+==实现callable 接口==：可以获取线程执行结果
 
 ```java
 public class Target implements Callable<Integer> {
@@ -2538,11 +3148,11 @@ public class ThirdThread {
 }
 ```
 
-# **六、设计模式**
+# 六、设计模式
 
-## **（一）、单例模式**
+## （一）、单例模式
 
-### **1、饿汉式（两种）**
+### 1、饿汉式（两种）
 
 ```java
 class Singleton {
@@ -2569,7 +3179,7 @@ class Singleton {
 
 ```
 
-### **2、懒汉式**
+### 2、懒汉式
 
 ```java
 class Singleton {
@@ -2587,11 +3197,11 @@ class Singleton {
 }
 ```
 
-**高并发下，并不能保证一定是单例的：**
+高并发下，并不能保证一定是单例的：
 
 **![image-20210507104525520](一、JAVA基础.assets/image-20210507104525520.png)**
 
-### **3、懒汉式（加锁）**
+### 3、懒汉式（加锁）
 
 ```java
 class Singleton {
@@ -2609,11 +3219,11 @@ class Singleton {
 }
 ```
 
-**同样不能保证线程的安全**
+同样不能保证线程的安全
 
 **![image-20210507104853866](一、JAVA基础.assets/image-20210507104853866.png)**
 
-### **4、懒汉式（DCL）**
+### 4、懒汉式（DCL）
 
 ```java
 class Singleton {
@@ -2635,15 +3245,15 @@ class Singleton {
 }
 ```
 
->**创建对象的步骤：**
+>创建对象的步骤：
 >
->**1、分配对象内存空间；**
+>1、分配对象内存空间；
 >
->**2、初始化对象，内存空间赋值；**
+>2、初始化对象，内存空间赋值；
 >
->**3、创建引用关系。**
+>3、创建引用关系。
 
-### **5、静态内部类**
+### 5、静态内部类
 
 ```java
 class Singleton {
@@ -2658,9 +3268,9 @@ class Singleton {
 }
 ```
 
-**饿汉式的⽅式只要`Singleton`类被装载了，那么`singleton`就会被实例化（没有达到`lazy loading`效果），⽽这种⽅式是`Singleton`类被装载了， `singleton`不⼀定被初始化。因为`SingletonHolder`类没有被主动使⽤，只有显示通过调⽤`getInstance`⽅法时，才会显示装载`SingletonHolder`类，从⽽实例化`singleton`**
+饿汉式的⽅式只要`Singleton`类被装载了，那么`singleton`就会被实例化（没有达到`lazy loading`效果），⽽这种⽅式是`Singleton`类被装载了， `singleton`不⼀定被初始化。因为`SingletonHolder`类没有被主动使⽤，只有显示通过调⽤`getInstance`⽅法时，才会显示装载`SingletonHolder`类，从⽽实例化`singleton`
 
-### **5、枚举**
+### 5、枚举
 
 ```JAVA
 enum  Singleton {
@@ -2671,16 +3281,16 @@ enum  Singleton {
 }
 ```
 
-> **⽤枚举实现单例模式可以避免如下2个问题，其他四种⽅式都不能避免**
+> ⽤枚举实现单例模式可以避免如下2个问题，其他四种⽅式都不能避免
 >
-> 1. **序列化造成单例模式不安全**
-> 2. **反射造成单例模式不安全**  
+> 1. 序列化造成单例模式不安全
+> 2. 反射造成单例模式不安全  
 
-## **（二）、代理模式**
+## （二）、代理模式
 
-### **1、静态代理模式**
+### 1、静态代理模式
 
-​		**假如要记录一段代码的运行时间。**
+​		假如要记录一段代码的运行时间。
 
 ```JAVA
 public class Test {
@@ -2724,11 +3334,11 @@ class UserServiceProxy implements UserService {
 }
 ```
 
-​		**如果现在再要求记录另外一个方法的运行时间，`UserServiceProxy`的代码基本是一致的，这样就存在重复的代码。**
+​		如果现在再要求记录另外一个方法的运行时间，`UserServiceProxy`的代码基本是一致的，这样就存在重复的代码。
 
-### **2、动态代理模式**
+### 2、动态代理模式
 
-#### **2.1、Proxy**
+#### 2.1、Proxy
 
 ```java
 public class Test {
@@ -2795,59 +3405,59 @@ class ProductServiceImpl implements ProductService {
 > InvocationHandler h： 实现InvocationHandler的切⾯类
 > ```
 
-# **七、Redis**
+# 七、Redis
 
-## **（一）、过期key的删除策略**
+## （一）、过期key的删除策略
 
-> - **定时策略：在设置键的过期时间的同时，创建⼀个定时器。当键的过期时间来临时，⽴即执⾏对键的删除操作。**
-> - **惰性策略：每次获取键的时候，判断键是否过期，如果过期的话，就删除该键，如果没有过期，则返回该键。**
-> - **定期策略：每隔⼀段时间，对键进⾏⼀次检查，删除⾥⾯的过期键 。==Redis中过期的key是由主线程删除的，为了不阻塞⽤户的请求，所以删除过期key的时候是少量多次。==** 
->   1. **每秒进⾏10次过期扫描，每次从过期字典中随机选出20个key**
->   2. **删除20个key中已经过期的key**
->   3. **如果过期key的⽐例超过1/4，则进⾏步骤⼀**
->   4. **每次扫描时间的上限默认不超过25ms，避免线程卡死**  
+> - 定时策略：在设置键的过期时间的同时，创建⼀个定时器。当键的过期时间来临时，⽴即执⾏对键的删除操作。
+> - 惰性策略：每次获取键的时候，判断键是否过期，如果过期的话，就删除该键，如果没有过期，则返回该键。
+> - 定期策略：每隔⼀段时间，对键进⾏⼀次检查，删除⾥⾯的过期键 。==Redis中过期的key是由主线程删除的，为了不阻塞⽤户的请求，所以删除过期key的时候是少量多次。== 
+>   1. 每秒进⾏10次过期扫描，每次从过期字典中随机选出20个key
+>   2. 删除20个key中已经过期的key
+>   3. 如果过期key的⽐例超过1/4，则进⾏步骤⼀
+>   4. 每次扫描时间的上限默认不超过25ms，避免线程卡死  
 >
-> **==定时删除策略对CPU不友好，当过期键⽐较多的时候， Redis线程⽤来删除过期键，会影响正常请求的响应。==**
+> ==定时删除策略对CPU不友好，当过期键⽐较多的时候， Redis线程⽤来删除过期键，会影响正常请求的响应。==
 >
-> **==惰性删除读CPU是⽐较有好的，但是会浪费⼤量的内存。如果⼀个key设置过期时间放到内存中，但是没有被访问到，那么它会⼀直存在内存中==。**
+> ==惰性删除读CPU是⽐较有好的，但是会浪费⼤量的内存。如果⼀个key设置过期时间放到内存中，但是没有被访问到，那么它会⼀直存在内存中==。
 >
-> **==定期删除策略则对CPU和内存都⽐较友好。==**
+> ==定期删除策略则对CPU和内存都⽐较友好。==
 
-## **（二）、缓存击穿、缓存雪崩、缓存穿透**
+## （二）、缓存击穿、缓存雪崩、缓存穿透
 
-### **1、缓存雪崩**
+### 1、缓存雪崩
 
-​		**假设有如下⼀个系统，⾼峰期请求为5000次/秒， 4000次⾛了缓存，只有1000次落到了数据库上，数据库每秒1000的并发是⼀个正常的指标，完全可以正常⼯作，==但如果缓存宕机了，或者缓存设置了相同的过期时间，导致缓存在同⼀时刻同时失效==，每秒5000次的请求会全部落到数据库上，数据库⽴⻢就死掉了，因为数据库⼀秒最多抗`2000`个请求，==如果DBA重启数据库，⽴⻢⼜会被新的请求打死了，这就是缓存雪崩==。**
+​		假设有如下⼀个系统，⾼峰期请求为5000次/秒， 4000次⾛了缓存，只有1000次落到了数据库上，数据库每秒1000的并发是⼀个正常的指标，完全可以正常⼯作，==但如果缓存宕机了，或者缓存设置了相同的过期时间，导致缓存在同⼀时刻同时失效==，每秒5000次的请求会全部落到数据库上，数据库⽴⻢就死掉了，因为数据库⼀秒最多抗`2000`个请求，==如果DBA重启数据库，⽴⻢⼜会被新的请求打死了，这就是缓存雪崩==。
 
 **![image-20210511110558846](一、JAVA基础.assets/image-20210511110558846.png)**
 
-> **==解决⽅法==:**
+> ==解决⽅法==:
 >
-> 1. **事前： redis⾼可⽤，主从+哨兵， redis cluster，避免全盘崩溃**
-> 2. **事中：本地ehcache缓存 + hystrix限流&降级，避免MySQL被打死**
-> 3. **事后： redis持久化RDB+AOF，快速恢复缓存数据**
-> 4. **缓存的失效时间设置为随机值，避免同时失效**  
+> 1. 事前： redis⾼可⽤，主从+哨兵， redis cluster，避免全盘崩溃
+> 2. 事中：本地ehcache缓存 + hystrix限流&降级，避免MySQL被打死
+> 3. 事后： redis持久化RDB+AOF，快速恢复缓存数据
+> 4. 缓存的失效时间设置为随机值，避免同时失效  
 
-### **2、缓存穿透**
+### 2、缓存穿透
 
-​		**假如客户端每秒发送5000个请求，其中4000个为⿊客的恶意攻击，即在数据库中也查不到。举个例⼦，⽤户id为正数，⿊客构造的⽤户id为负数，==频繁请求肯定不存在的数据==，如果⿊客每秒⼀直发送这4000个请求，缓存就不起作⽤，数据库也很快被打死。**  
+​		假如客户端每秒发送5000个请求，其中4000个为⿊客的恶意攻击，即在数据库中也查不到。举个例⼦，⽤户id为正数，⿊客构造的⽤户id为负数，==频繁请求肯定不存在的数据==，如果⿊客每秒⼀直发送这4000个请求，缓存就不起作⽤，数据库也很快被打死。  
 
 **![image-20210511110851528](一、JAVA基础.assets/image-20210511110851528.png)**
 
-> **==解决⽅法:==**
+> ==解决⽅法:==
 >
-> 1. **对请求参数进⾏校验，不合理直接返回,（==基本策略==）**
-> 2. **查询不到的数据也放到缓存， value为空，如 set -999 ""（==并不起作用，通过随机数请求，使缓存占用更多的空间不说，同时由于缓存的清空策略导致有用的缓存被清除==）**
-> 3. **使⽤布隆过滤器，快速判断key是否在数据库中存在，不存在直接返回 。（==比较常用，布隆过滤器里面没有的，缓存中肯定不存在，布隆过滤器里面有的，缓存中不一定存在==）**
+> 1. 对请求参数进⾏校验，不合理直接返回,（==基本策略==）
+> 2. 查询不到的数据也放到缓存， value为空，如 set -999 ""（==并不起作用，通过随机数请求，使缓存占用更多的空间不说，同时由于缓存的清空策略导致有用的缓存被清除==）
+> 3. 使⽤布隆过滤器，快速判断key是否在数据库中存在，不存在直接返回 。（==比较常用，布隆过滤器里面没有的，缓存中肯定不存在，布隆过滤器里面有的，缓存中不一定存在==）
 
-### **3、缓存击穿**
+### 3、缓存击穿
 
-​		**设置了过期时间的key，承载着⾼并发，是⼀种热点数据。==从这个key过期到重新从MySQL加载数据放到缓存的⼀段时间，⼤量的请求有可能把数据库打死==。缓存雪崩是指==⼤量缓存失效==，缓存击穿是指==热点数据的缓存失效==。**  
+​		**设置了过期时间的key，承载着⾼并发，是⼀种热点数据。==从这个key过期到重新从MySQL加载数据放到缓存的⼀段时间，⼤量的请求有可能把数据库打死==。缓存雪崩是指==⼤量缓存失效==，缓存击穿是指==热点数据的缓存失效==。  
 
-> **==解决⽅法==**
+> ==解决⽅法==
 >
-> 1. **设置key永远不过期，或者快过期时，通过另⼀个==异步线程重新设置key==**
-> 2. **当从缓存拿到的数据为null，`重新从数据库加载数据的过程上锁`。**
+> 1. 设置key永远不过期，或者快过期时，通过另⼀个==异步线程重新设置key==
+> 2. 当从缓存拿到的数据为null，`重新从数据库加载数据的过程上锁`。
 
 # **八、MySQL**
 
@@ -3121,33 +3731,48 @@ public class Test {
 
 
 
-# **十四、python**
+# 十四、python
 
-# **十六、maven**
+# 十六、maven
 
-# **十七、计算机网络**
+# 十七、计算机网络
 
-# **十八、数据结构**
+# 十八、数据结构
 
-# **十九、计算机基础**
+# 十九、计算机基础
 
-# **二十、MQ**
+# 二十、MQ
 
-# **二十一、Mybatis**
+# 二十一、Mybatis
 
-## **（一）、执行机制**
+## （一）、执行机制
 
-> **因为`mybatis`利⽤动态代理帮我们⽣成了接⼝的实现类，这个类就是`org.apache.ibatis.binding.MapperProxy`**
+> 因为`mybatis`利⽤动态代理帮我们⽣成了接⼝的实现类，这个类就是`org.apache.ibatis.binding.MapperProxy`
 
-# **二十二、Java web**
+# 二十二、Java web
 
 
 
-# **二十三、Flink**
+# 二十三、Flink
 
-# **二十四、Nifi**
+# 二十四、Nifi
 
-# **二十五、常用工具的使用**
+# 二十五、常用工具的使用
 
-**Jmeter postman idea** 
+## 1、IDEA
 
+### 1.1、同一代码在多端口启动
+
+![image-20210527140929549](一、JAVA基础.assets/image-20210527140929549.png)
+
+![image-20210527140936238](一、JAVA基础.assets/image-20210527140936238.png)
+
+# 二十六、分布式
+
+## 1、分布式唯一ID
+
+![image-20210527163816657](一、JAVA基础.assets/image-20210527163816657.png)
+
+## 2、高可用
+
+​		
