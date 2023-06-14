@@ -19,7 +19,7 @@
         <mybatis-plus.version>3.3.0</mybatis-plus.version>
         <comm-lib.version>2.0.4</comm-lib.version>
         <fastjson.version>1.2.46</fastjson.version>
-        <guava.version>27.0-jre</guava.version>
+        <guava.version>32.0.0-jre</guava.version>
     </properties>
 
     <dependencies>
